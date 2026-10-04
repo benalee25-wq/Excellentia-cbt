@@ -62,3 +62,7 @@ function parseCSV(text) {            // small RFC4180 parser
   if (f || r.length) { r.push(f); rows.push(r); }
   return rows.filter(x => x.some(v => v.trim()));
 }
+
+// Show / hide password button on login forms
+(() => { const b = $('#sp'), p = $('#p'); if (!b || !p) return;
+  b.onclick = () => { const hide = p.type === 'password'; p.type = hide ? 'text' : 'password'; b.textContent = hide ? 'Hide' : 'Show'; p.focus(); }; })();

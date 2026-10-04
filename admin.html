@@ -263,16 +263,28 @@ function eForm(x = {}) {
 
 // ================= STUDENTS =================
 async function students() {
-  $('#main').innerHTML = `<div class="card"><h2>Register students in bulk</h2><p>CSV columns: <b>Username, Full Name, Password, Class</b> (password at least 6 characters).</p>
+  $('#main').innerHTML = `<div id="rq"></div><div class="card"><h2>Register students in bulk</h2><p>CSV columns: <b>Username, Full Name, Password, Class</b> (password at least 6 characters).</p>
   <div class="row"><button class="alt" id="sTpl">Download CSV template</button></div><label>Upload CSV</label><input type="file" id="sFile" accept=".csv"><div id="sOut"></div></div>
   <div class="card"><div class="row"><select id="sc"><option value="">All classes</option>${opts(CLASSES)}</select></div><div class="scroll" id="sList"></div></div>`;
   $('#sTpl').onclick = () => dl('students-template.csv', 'Username,Full Name,Password,Class\nade001,Ade Bello,pass1234,JSS1\nchi002,Chioma Okoro,pass1234,SS2');
   $('#sFile').onchange = e => regStudents(e.target.files[0]);
-  $('#sc').onchange = listStudents; listStudents();
+  $('#sc').onchange = listStudents; listStudents(); loadReq();
 }
 async function listStudents() {
   let q = sb.from('profiles').select('username,full_name,class_level').eq('role', 'student').order('class_level').order('full_name').limit(1000); if ($('#sc').value) q = q.eq('class_level', $('#sc').value);
-  const { data } = await q; $('#sList').innerHTML = `<p class="mute">${(data || []).length} student(s)</p><table><tr><th>Username</th><th>Name</th><th>Class</th></tr>${(data || []).map(s => `<tr><td>${esc(s.username)}</td><td>${esc(s.full_name)}</td><td>${s.class_level || ''}</td></tr>`).join('')}</table>`;
+  const { data } = await q; $('#sList').innerHTML = `<p class="mute">${(data || []).length} student(s)</p><table><tr><th>Username</th><th>Name</th><th>Class</th><th></th></tr>${(data || []).map(s => `<tr><td>${esc(s.username)}</td><td>${esc(s.full_name)}</td><td>${s.class_level || ''}</td><td><button class="alt sm" data-rs="${esc(s.username)}">Reset password</button></td></tr>`).join('')}</table>`;
+  $$('[data-rs]').forEach(b => b.onclick = () => resetPw(b.dataset.rs));
+}
+async function resetPw(u) {
+  const np = prompt(`New password for ${u} (at least 6 characters):`); if (np === null) return;
+  const { error } = await sb.rpc('admin_reset_password', { uname: u, newpass: np.trim() });
+  if (error) return toast(error.message, true);
+  alert(`Done. ${u} can now sign in with the password: ${np.trim()}`); loadReq();
+}
+async function loadReq() {
+  const { data } = await sb.from('reset_requests').select('*').eq('done', false).order('created_at');
+  $('#rq').innerHTML = data && data.length ? `<div class="card"><h3>Password requests (${data.length})</h3>${data.map(r => `<p><b>${esc(r.username)}</b> <button class="sm" data-rq="${esc(r.username)}">Set new password</button></p>`).join('')}</div>` : '';
+  $$('[data-rq]').forEach(b => b.onclick = () => resetPw(b.dataset.rq));
 }
 async function regStudents(f) {
   if (!f) return; const rows = parseCSV(await f.text()); rows.shift();

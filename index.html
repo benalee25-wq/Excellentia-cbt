@@ -19,6 +19,11 @@
     <p class="err" id="lerr"></p>
     <button id="bLogin" style="width:100%">Sign in</button>
   </div>
+  <p style="text-align:center;margin:0 0 12px"><button type="button" class="alt sm" id="bForgot">Forgot password?</button></p>
+  <div class="card hide" id="fp"><h3>Forgot your password?</h3>
+    <p class="mute">Enter your username. Your teacher will get your request and give you a new password.</p>
+    <label for="fu">Username</label><input id="fu" autocapitalize="none">
+    <button id="bReq" style="width:100%;margin-top:10px">Send request</button><p id="fmsg" class="mute"></p></div>
   <p style="text-align:center"><button class="alt sm themebtn">Light / dark</button></p>
 </section>
 
@@ -49,6 +54,12 @@ $('#bLogin').onclick = e => run(e.target, async () => {
   await boot(true);
 });
 $('#p').onkeydown = e => e.key === 'Enter' && $('#bLogin').click();
+$('#bForgot').onclick = () => { $('#fp').classList.toggle('hide'); $('#fu').value = $('#u').value; };
+$('#bReq').onclick = e => run(e.target, async () => {
+  const u = $('#fu').value.trim(); if (!u) return toast('Type your username first.', true);
+  const { error } = await sb.rpc('request_reset', { uname: u }); if (error) throw error;
+  $('#fmsg').textContent = 'Request sent. Tell your teacher your name so they can give you a new password.';
+});
 $('#bOut').onclick = async () => { if (ex && !confirm('Leave the exam? Your answers are saved and you can resume.')) return; clearInterval(tick); ex = null; await sb.auth.signOut(); show('vLogin'); };
 
 async function boot(fresh) {

@@ -45,7 +45,7 @@ brand(); theme();
 $('#bLogin').onclick = e => run(e.target, async () => {
   const v = $('#u').value.trim().toLowerCase();
   const { error } = await sb.auth.signInWithPassword({ email: v.includes('@') ? v : v + '@' + CFG.EMAIL_DOMAIN, password: $('#p').value });
-  if (error) return $('#lerr').textContent = 'Wrong username or password.';
+  if (error) { $('#lerr').textContent = 'Wrong username or password.'; $('#p').value = ''; $('#p').focus(); return; }
   boot();
 });
 $('#p').onkeydown = e => e.key === 'Enter' && $('#bLogin').click();
@@ -53,7 +53,8 @@ $('#bOut').onclick = async () => { await sb.auth.signOut(); show('vLogin'); };
 async function boot() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return show('vLogin');
-  const { data: p } = await sb.from('profiles').select('role').eq('id', session.user.id).single();
+  const { data: p, error: pe } = await sb.from('profiles').select('role').eq('id', session.user.id).single();
+  if (pe) { await sb.auth.signOut(); show('vLogin'); return $('#lerr').textContent = 'Database error: ' + pe.message; }
   if (!p || p.role !== 'admin') { await sb.auth.signOut(); show('vLogin'); return $('#lerr').textContent = 'This account is not a teacher/admin account.'; }
   show('vApp'); go(tab);
 }

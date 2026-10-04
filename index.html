@@ -45,7 +45,7 @@ $('#bLogin').onclick = e => run(e.target, async () => {
   $('#lerr').textContent = '';
   const email = $('#u').value.trim().toLowerCase() + '@' + CFG.EMAIL_DOMAIN;
   const { error } = await sb.auth.signInWithPassword({ email, password: $('#p').value });
-  if (error) { $('#lerr').textContent = 'Wrong username or password. Check and try again.'; return; }
+  if (error) { $('#lerr').textContent = 'Wrong username or password. Check and try again.'; $('#p').value = ''; $('#p').focus(); return; }
   await boot(true);
 });
 $('#p').onkeydown = e => e.key === 'Enter' && $('#bLogin').click();

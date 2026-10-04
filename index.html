@@ -148,13 +148,26 @@ function tickUI() {
   if (left <= 0) { clearInterval(tick); toast('Time is up. Submitting…'); return submit(true); }
   if (t) { const m = Math.floor(left / 60), s = left % 60; t.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`; t.classList.toggle('low', left <= 300); }
 }
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const slow = (p, ms = 20000) => Promise.race([p, wait(ms).then(() => ({ data: null, error: { message: 'The network is slow or offline.' } }))]);
 async function submit(auto) {
-  if (!ex || ex.submitting) return; ex.submitting = true; clearInterval(tick);
-  await sync();
-  const { data, error } = await sb.rpc('submit_attempt', { aid: ex.attempt_id, tok: tok() });
-  if (error) { ex.submitting = false; startTimer(); return toast('Could not submit: ' + error.message + ' Check your network and try again.', true); }
-  localStorage.removeItem('cbt-' + ex.attempt_id);
-  const aid = ex.attempt_id; ex = null;
+  if (!ex || ex.submitting) return; ex.submitting = true; clearInterval(tick); clearTimeout(saveT);
+  const aid = ex.attempt_id;
+  $('#main').innerHTML = `<div class="card"><h2>Submitting your answers…</h2><p class="mute">${auto ? 'Time is up. ' : ''}Please keep this page open.</p></div>`;
+  scrollTo(0, 0);
+  let msg = '';
+  for (let i = 0; i < 3; i++) {
+    await slow(sb.rpc('save_progress', { aid, ans: ex.ans, flg: [...ex.flags], tabs: ex.tabs, tok: tok() }));
+    const { data, error } = await slow(sb.rpc('submit_attempt', { aid, tok: tok() }));
+    if (!error) return showScore(data, auto, aid);
+    msg = error.message; if (/SESSION_REPLACED/.test(msg)) break;
+    await wait(1500 * (i + 1));
+  }
+  $('#main').innerHTML = `<div class="card"><h2>Could not submit yet</h2><p class="err">${esc(msg)}</p><p>Your answers are saved on this phone. Check your internet, then tap Try again.</p><button id="bRetry" style="width:100%">Try again</button></div>`;
+  $('#bRetry').onclick = () => { ex.submitting = false; submit(auto); };
+}
+function showScore(data, auto, aid) {
+  localStorage.removeItem('cbt-' + aid); ex = null;
   $('#main').innerHTML = `<div class="card"><p class="mute" style="text-align:center">${auto ? 'Time ran out — your exam was submitted.' : 'Exam submitted.'}</p>
    <p class="score">${data.score}/${data.total}</p><p style="text-align:center;font-size:1.3rem">${data.percent}% · <span class="badge ${data.passed ? 'ok' : 'bad'}">${data.passed ? 'Passed' : 'Not passed'}</span></p>
    <div class="row"><button id="bHome">Back to exams</button>${data.show_review ? '<button class="alt" id="bRev">Review answers</button>' : ''}</div></div>`;

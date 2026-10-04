@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CBT Admin</title>
+<link rel="stylesheet" href="style.css">
+<style>#slips{display:none}@media print{body.ps>*:not(#slips){display:none!important}body.ps #slips{display:block}}</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+</head>
+<body>
+<section id="vLogin" class="login hide">
+  <div class="logo"></div><h1 class="school"></h1><p class="mute">Teacher / admin sign in</p>
+  <div class="card">
+    <label for="u">Username</label><input id="u" autocapitalize="none">
+    <label for="p">Password</label><input id="p" type="password">
+    <p class="err" id="lerr"></p><button id="bLogin" style="width:100%">Sign in</button>
+  </div>
+</section>
+
+<div id="vApp" class="hide">
+  <header class="top"><div class="logo"></div><div class="t"><b class="school"></b><small>Admin</small></div>
+    <button class="themebtn">◐</button><button id="bOut">Sign out</button></header>
+  <nav class="tabs" id="tabs">
+    <button data-t="bank">Questions</button><button data-t="upload">Upload</button><button data-t="exams">Exams</button>
+    <button data-t="students">Students</button><button data-t="results">Results</button>
+  </nav>
+  <main class="wrap" id="main"></main>
+</div>
+<div id="slips"></div>
+
+<script src="config.js"></script>
+<script>
+const show = id => ['vLogin', 'vApp'].forEach(x => $('#' + x).classList.toggle('hide', x !== id));
+const opts = (arr, sel) => arr.map(x => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join('');
+const dl = (name, text, type = 'text/csv') => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); };
+const csvCell = v => /[",\n]/.test(v ?? '') ? '"' + String(v).replace(/"/g, '""') + '"' : (v ?? '');
+const loc = d => { if (!d) return ''; const t = new Date(d); t.setMinutes(t.getMinutes() - t.getTimezoneOffset()); return t.toISOString().slice(0, 16); };
+let tab = 'bank';
+brand(); theme();
+
+// ---------- auth ----------
+$('#bLogin').onclick = e => run(e.target, async () => {
+  const v = $('#u').value.trim().toLowerCase();
+  const { error } = await sb.auth.signInWithPassword({ email: v.includes('@') ? v : v + '@' + CFG.EMAIL_DOMAIN, password: $('#p').value });
+  if (error) return $('#lerr').textContent = 'Wrong username or password.';
+  boot();
+});
+$('#p').onkeydown = e => e.key === 'Enter' && $('#bLogin').click();
+$('#bOut').onclick = async () => { await sb.auth.signOut(); show('vLogin'); };
+async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return show('vLogin');
+  const { data: p } = await sb.from('profiles').select('role').eq('id', session.user.id).single();
+  if (!p || p.role !== 'admin') { await sb.auth.signOut(); show('vLogin'); return $('#lerr').textContent = 'This account is not a teacher/admin account.'; }
+  show('vApp'); go(tab);
+}
+$$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.t));
+function go(t) { tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t)); ({ bank, upload, exams, students, results })[t](); }
+
+// ================= QUESTION BANK =================
+async function bank() {
+  $('#main').innerHTML = `<div class="card"><div class="row">
+    <div><label>Class</label><select id="fc"><option value="">All</option>${opts(CLASSES)}</select></div>
+    <div><label>Subject</label><input id="fs" placeholder="e.g. Mathematics"></div>
+    <div><label>Topic</label><input id="ft"></div>
+    <div><label>Difficulty</label><select id="fd"><option value="">All</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div></div>
+    <div class="row" style="margin-top:10px"><button id="bFind">Search</button><button class="gold" id="bAdd">+ Add question</button></div></div><div id="list"></div>`;
+  $('#bFind').onclick = loadBank; $('#bAdd').onclick = () => qForm();
+  loadBank();
+}
+async function loadBank() {
+  let q = sb.from('questions').select('*').order('created_at', { ascending: false }).limit(300);
+  if ($('#fc').value) q = q.eq('class_level', $('#fc').value);
+  if ($('#fs').value.trim()) q = q.ilike('subject', '%' + $('#fs').value.trim() + '%');
+  if ($('#ft').value.trim()) q = q.ilike('topic', '%' + $('#ft').value.trim() + '%');
+  if ($('#fd').value) q = q.eq('difficulty', $('#fd').value);
+  const { data, error } = await q; if (error) return toast(error.message, true);
+  $('#list').innerHTML = `<p class="mute">${data.length} question(s)${data.length === 300 ? ' (showing first 300 — narrow the filters)' : ''}</p>` +
+    (data.map(x => `<div class="card"><span class="badge">${x.class_level}</span> <span class="badge">${esc(x.subject)}</span> <span class="badge">${esc(x.topic || 'No topic')}</span> <span class="badge gold">${esc(x.difficulty)}</span>
+    <div class="qtext" style="font-size:1.05rem">${fmt(x.question)}</div>${x.image_url ? `<img class="qimg" style="max-height:120px" src="${esc(x.image_url)}" alt="">` : ''}
+    <p class="mute">A. ${fmt(x.opt_a)} · B. ${fmt(x.opt_b)}${x.opt_c ? ' · C. ' + fmt(x.opt_c) : ''}${x.opt_d ? ' · D. ' + fmt(x.opt_d) : ''}<br><b>Answer: ${x.correct}</b> · ${x.marks} mark(s)</p>
+    <button class="alt sm" data-e="${x.id}">Edit</button> <button class="alt sm" data-d="${x.id}">Delete</button></div>`).join('') || '<div class="card">No questions yet. Add one or use the Upload tab.</div>');
+  $$('[data-e]').forEach(b => b.onclick = () => qForm(data.find(x => x.id === b.dataset.e)));
+  $$('[data-d]').forEach(b => b.onclick = async () => { if (!confirm('Delete this question?')) return; const { error } = await sb.from('questions').delete().eq('id', b.dataset.d); error ? toast(error.message, true) : (toast('Deleted'), loadBank()); });
+}
+function modal(html) { const m = document.createElement('div'); m.className = 'modal'; m.innerHTML = '<div>' + html + '</div>'; m.onclick = e => e.target === m && m.remove(); document.body.append(m); return m; }
+function qForm(x = {}) {
+  const m = modal(`<h2>${x.id ? 'Edit' : 'Add'} question</h2>
+  <div class="row"><div><label>Class</label><select id="qc">${opts(CLASSES, x.class_level)}</select></div><div><label>Subject</label><input id="qs" value="${esc(x.subject)}"></div></div>
+  <label>Topic</label><input id="qt" value="${esc(x.topic)}">
+  <label>Question <span class="mute">(use x^2, H_2O, [3/4] for notation)</span></label><textarea id="qq" rows="3">${esc(x.question)}</textarea>
+  ${['a', 'b', 'c', 'd'].map(k => `<label>Option ${k.toUpperCase()}</label><input id="o${k}" value="${esc(x['opt_' + k])}">`).join('')}
+  <div class="row"><div><label>Correct answer</label><select id="qa">${opts(['A', 'B', 'C', 'D'], x.correct)}</select></div><div><label>Marks</label><input id="qm" type="number" step="0.5" value="${x.marks ?? 1}"></div>
+  <div><label>Difficulty</label><select id="qd">${opts(['Easy', 'Medium', 'Hard'], x.difficulty || 'Medium')}</select></div></div>
+  <label>Explanation (shown in review)</label><textarea id="qe" rows="2">${esc(x.explanation)}</textarea>
+  <label>Image (diagram or chart)</label><input id="qi" type="file" accept="image/*"><p class="mute" id="qin">${x.image_url ? 'Current image kept unless you choose a new one.' : ''}</p>
+  <div class="row"><button id="qsave">Save question</button><button class="alt" id="qx">Cancel</button></div>`);
+  $('#qx', m).onclick = () => m.remove();
+  $('#qsave', m).onclick = e => run(e.target, async () => {
+    const r = { class_level: $('#qc', m).value, subject: $('#qs', m).value.trim(), topic: $('#qt', m).value.trim(), question: $('#qq', m).value.trim(),
+      opt_a: $('#oa', m).value.trim(), opt_b: $('#ob', m).value.trim(), opt_c: $('#oc', m).value.trim() || null, opt_d: $('#od', m).value.trim() || null,
+      correct: $('#qa', m).value, marks: +$('#qm', m).value || 1, difficulty: $('#qd', m).value, explanation: $('#qe', m).value.trim() || null, image_url: x.image_url || null };
+    if (!r.subject || !r.question || !r.opt_a || !r.opt_b) return toast('Subject, question and options A and B are required.', true);
+    if (!r['opt_' + r.correct.toLowerCase()]) return toast('The correct answer points to an empty option.', true);
+    const f = $('#qi', m).files[0];
+    if (f) { const path = `${Date.now()}-${f.name.replace(/[^\w.]/g, '_')}`; const { error } = await sb.storage.from('question-images').upload(path, f); if (error) return toast('Image upload failed: ' + error.message, true); r.image_url = sb.storage.from('question-images').getPublicUrl(path).data.publicUrl; }
+    const { error } = x.id ? await sb.from('questions').update(r).eq('id', x.id) : await sb.from('questions').insert(r);
+    if (error) return toast(error.message, true); m.remove(); toast('Saved'); loadBank();
+  });
+}
+
+// ================= BULK UPLOAD (paste or file) =================
+const store = k => localStorage.getItem('cbt-' + k) || '';
+let parsed = [];
+function upload() {
+  $('#main').innerHTML = `<div class="card"><h2>Add questions</h2>
+  <div class="row"><div><label>Class</label><select id="uc">${opts(CLASSES, store('uc'))}</select></div>
+  <div><label>Subject</label><input id="us" value="${esc(store('us'))}" placeholder="e.g. Mathematics"></div>
+  <div><label>Topic (optional)</label><input id="ut"></div></div>
+  <label>Paste your questions here (from Word, PDF or WhatsApp)</label>
+  <textarea id="ptxt" rows="9" placeholder="1. What is 2 + 3?&#10;A. 4&#10;B. 5&#10;C. 6&#10;D. 7&#10;Answer: B&#10;&#10;2. Water boils at what temperature?&#10;A. 50&#10;B. 100*&#10;C. 0&#10;D. 10"></textarea>
+  <button id="bRead" style="width:100%;margin-top:10px">Check questions</button>
+  <p class="mute" style="text-align:center">or choose a Word, Excel or CSV file</p>
+  <input type="file" id="file" accept=".csv,.xlsx,.xls,.docx">
+  <details style="margin-top:12px"><summary>Tips and templates</summary>
+  <p class="mute">Show the right answer with a line "Answer: B" under the question, or put * after the correct option. For powers, subscripts and fractions write x^2, H_2O and [3/4].<br>Excel/CSV columns: Question, A, B, C, D, Answer. Optional extra columns: Class, Subject, Topic, Marks, Difficulty, Explanation.</p>
+  <button class="alt sm" id="tCsv">CSV template</button> <button class="alt sm" id="tXlsx">Excel template</button></details></div><div id="prev"></div>`;
+  const H = ['Question', 'A', 'B', 'C', 'D', 'Answer'], ex = [['What is [1/2] + [1/4]?', '[3/4]', '[2/6]', '[1/8]', '1', 'A']];
+  $('#tCsv').onclick = () => dl('questions-template.csv', [H, ...ex].map(r => r.map(csvCell).join(',')).join('\n'));
+  $('#tXlsx').onclick = () => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([H, ...ex]), 'Questions'); XLSX.writeFile(wb, 'questions-template.xlsx'); };
+  $('#bRead').onclick = e => run(e.target, async () => {
+    const t = $('#ptxt').value.trim(); if (!t) return toast('Paste your questions first, or choose a file.', true);
+    await finish(parseText(t));
+  });
+  $('#file').onchange = async e => { try { if (e.target.files[0]) await readFile(e.target.files[0]); } catch (er) { toast('Could not read the file: ' + er.message, true); } };
+}
+const norm = s => String(s).toLowerCase().replace(/[^a-z]/g, '');
+async function readFile(f) {
+  const ext = f.name.split('.').pop().toLowerCase(); let objs = [];
+  if (ext === 'csv') { const rows = parseCSV(await f.text()); const h = rows.shift().map(norm); objs = rows.map(r => Object.fromEntries(h.map((k, i) => [k, r[i] ?? '']))); }
+  else if (ext === 'xlsx' || ext === 'xls') { const wb = XLSX.read(await f.arrayBuffer()); objs = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }).map(o => Object.fromEntries(Object.entries(o).map(([k, v]) => [norm(k), v]))); }
+  else if (ext === 'docx') objs = parseText((await mammoth.extractRawText({ arrayBuffer: await f.arrayBuffer() })).value);
+  else return toast('Use a Word (.docx), Excel (.xlsx) or CSV file.', true);
+  await finish(objs);
+}
+async function finish(objs) {
+  if (!objs.length) return toast('No questions found. Each question needs its options (A, B, C, D) and an answer.', true);
+  localStorage.setItem('cbt-uc', $('#uc').value); localStorage.setItem('cbt-us', $('#us').value.trim());
+  const { data: old } = await sb.from('questions').select('class_level,subject,question').limit(5000);
+  const seen = new Set((old || []).map(o => key(o.class_level, o.subject, o.question)));
+  parsed = objs.map(o => check(o, seen)); preview();
+  $('#prev').scrollIntoView({ behavior: 'smooth' });
+}
+const key = (c, s, q) => [c, s, q].map(v => String(v).toLowerCase().replace(/\s+/g, ' ').trim()).join('|');
+
+// Reads plain text: numbered or unnumbered questions, options A-D (A. / A) / (A)),
+// answer from "Answer: B" or a * / ✓ after the right option.
+function parseText(text) {
+  const out = []; let cur = null, def = {};
+  const OPT = /^\(?([A-Da-d])\s*[.):]\s*(.*)$/, ANS = /^(?:answer|ans|correct(?:\s*answer)?)\s*[:\-=.]?\s*\(?([A-Da-d])\b/i,
+    QST = /^(?:q(?:uestion)?\s*)?\d+\s*[.):]\s+(.+)$/i, QLB = /^q(?:uestion)?\s*[:.]\s*(.+)$/i,
+    META = /^(class|subject|topic|explanation|marks|difficulty)\s*:\s*(.*)$/i, MARK = /\s*(\*|✓|✔|\(correct\))\s*$/i;
+  const flush = () => { if (cur && cur.question) { delete cur._last; out.push(cur); } cur = null; };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim(); if (!line) continue; let m;
+    if ((m = line.match(META))) { const k = m[1].toLowerCase(); if (['class', 'subject', 'topic'].includes(k)) def[k] = m[2].trim(); else if (cur) cur[k] = m[2].trim(); continue; }
+    if (cur && (m = line.match(ANS))) { cur.correctanswer = m[1].toUpperCase(); continue; }
+    if (cur && (m = line.match(OPT))) { let t = m[2].trim(); const k = m[1].toLowerCase(); if (MARK.test(t)) { cur.correctanswer = k.toUpperCase(); t = t.replace(MARK, ''); } cur['option' + k] = t; cur._last = 'option' + k; continue; }
+    if ((m = line.match(QLB) || line.match(QST))) { flush(); cur = { ...def, question: m[1].trim() }; continue; }
+    if (cur && (cur.optiond !== undefined || cur.correctanswer)) { flush(); cur = { ...def, question: line }; }
+    else if (cur && cur._last) cur[cur._last] += ' ' + line;
+    else if (cur) cur.question += '\n' + line;
+    else cur = { ...def, question: line };
+  }
+  flush(); return out;
+}
+function check(o, seen) {
+  const e = [], L = ['a', 'b', 'c', 'd'];
+  const cls = String(o.class || $('#uc').value || '').toUpperCase().replace(/\s+/g, ''); if (!CLASSES.includes(cls)) e.push('Class must be one of ' + CLASSES.join(', '));
+  const r = { class_level: cls, subject: String(o.subject || $('#us').value || '').trim(), topic: String(o.topic ?? $('#ut').value ?? '').trim(), question: String(o.question || '').trim(),
+    explanation: String(o.explanation || '').trim() || null, difficulty: ['Easy', 'Medium', 'Hard'].find(d => d.toLowerCase() === String(o.difficulty || 'Medium').trim().toLowerCase()) || 'Medium', marks: parseFloat(o.marks) || 1 };
+  L.forEach(k => r['opt_' + k] = String(o['option' + k] ?? o[k] ?? '').trim() || null);
+  if (!r.subject) e.push('Missing subject'); if (!r.question) e.push('Missing question'); if (!r.opt_a || !r.opt_b) e.push('Need at least options A and B');
+  const a = String(o.correctanswer ?? o.answer ?? '').trim(); let c = /^\(?[A-Da-d]\)?[.)]?$/.test(a) ? a.replace(/[^A-Da-d]/g, '').toUpperCase() : '';
+  if (!c && a) { const i = L.findIndex(k => r['opt_' + k] && r['opt_' + k].toLowerCase() === a.toLowerCase()); c = i >= 0 ? 'ABCD'[i] : ''; }
+  r.correct = c; if (!c) e.push('Missing or invalid correct answer'); else if (!r['opt_' + c.toLowerCase()]) e.push('Correct answer points to an empty option');
+  const k = key(r.class_level, r.subject, r.question); if (r.question && seen.has(k)) e.push('Duplicate question'); else seen.add(k);
+  return { r, e };
+}
+function preview() {
+  const ok = parsed.filter(p => !p.e.length), bad = parsed.length - ok.length;
+  $('#prev').innerHTML = `<div class="card"><h3>${parsed.length} question(s) found · ${ok.length} ready${bad ? ` · <span class="err">${bad} need attention</span>` : ''}</h3>
+  <p class="mute">${bad ? 'Where the answer is missing, choose it in the Answer box. Red rows are skipped when you save.' : 'Everything looks good.'}</p>
+  <button id="bSave" ${ok.length ? '' : 'disabled'} style="width:100%">Save ${ok.length} question(s)</button>
+  <div class="scroll"><table><tr><th>#</th><th>Question and options</th><th>Answer</th></tr>
+  ${parsed.map((p, i) => `<tr class="${p.e.length ? 'errrow' : ''}"><td>${i + 1}</td><td>${fmt(p.r.question).slice(0, 160)}<br><span class="mute">${['a', 'b', 'c', 'd'].filter(k => p.r['opt_' + k]).map(k => k.toUpperCase() + '. ' + fmt(p.r['opt_' + k])).join(' · ')}</span>${p.e.length ? '<br><span class="err">' + esc(p.e.join('; ')) + '</span>' : ''}</td>
+  <td><select data-i="${i}" style="width:72px"><option value="">?</option>${[...'ABCD'].map(c => `<option ${p.r.correct === c ? 'selected' : ''}>${c}</option>`).join('')}</select></td></tr>`).join('')}</table></div></div>`;
+  $$('#prev select').forEach(s => s.onchange = () => {
+    const p = parsed[+s.dataset.i]; p.r.correct = s.value; p.e = p.e.filter(x => !/correct answer/i.test(x));
+    if (!s.value) p.e.push('Missing or invalid correct answer'); else if (!p.r['opt_' + s.value.toLowerCase()]) p.e.push('Correct answer points to an empty option');
+    preview();
+  });
+  $('#bSave').onclick = e => run(e.target, async () => {
+    for (let i = 0; i < ok.length; i += 200) { const { error } = await sb.from('questions').insert(ok.slice(i, i + 200).map(p => p.r)); if (error) return toast(error.message, true); }
+    toast(`${ok.length} questions saved`); parsed = []; $('#prev').innerHTML = ''; $('#ptxt').value = ''; $('#file').value = '';
+  });
+}
+
+// ================= EXAMS =================
+async function exams() {
+  const { data, error } = await sb.from('exams').select('*').order('created_at', { ascending: false });
+  if (error) return toast(error.message, true);
+  $('#main').innerHTML = `<button class="gold" id="bNew">+ Create exam</button><div style="margin-top:12px">` + (data.map(x => `<div class="card"><h3>${esc(x.title)} <span class="badge ${x.published ? 'ok' : ''}">${x.published ? 'Published' : 'Draft'}</span></h3>
+   <p class="mute">${x.class_level} · ${esc(x.subject)}${x.term ? ' · ' + esc(x.term) : ''} · ${x.duration_min} min · ${x.question_ids ? x.question_ids.length + ' chosen' : x.num_questions + ' random'} questions · pass ${x.pass_mark}%${x.access_code ? ' · code ' + esc(x.access_code) : ''}<br>${x.start_at ? new Date(x.start_at).toLocaleString() : 'Open now'} → ${x.end_at ? new Date(x.end_at).toLocaleString() : 'no end'} · Review: ${x.show_review ? 'on' : 'off'}</p>
+   <button class="sm" data-p="${x.id}">${x.published ? 'Unpublish' : 'Publish'}</button> <button class="alt sm" data-r="${x.id}">${x.show_review ? 'Hide' : 'Allow'} review</button> <button class="alt sm" data-e="${x.id}">Edit</button> <button class="alt sm" data-d="${x.id}">Delete</button></div>`).join('') || '<div class="card">No exams yet.</div>') + '</div>';
+  $('#bNew').onclick = () => eForm();
+  const upd = (id, v) => sb.from('exams').update(v).eq('id', id).then(({ error }) => error ? toast(error.message, true) : exams());
+  $$('[data-p]').forEach(b => b.onclick = () => upd(b.dataset.p, { published: !data.find(x => x.id === b.dataset.p).published }));
+  $$('[data-r]').forEach(b => b.onclick = () => upd(b.dataset.r, { show_review: !data.find(x => x.id === b.dataset.r).show_review }));
+  $$('[data-e]').forEach(b => b.onclick = () => eForm(data.find(x => x.id === b.dataset.e)));
+  $$('[data-d]').forEach(b => b.onclick = () => confirm('Delete this exam and ALL its student results?') && sb.from('exams').delete().eq('id', b.dataset.d).then(({ error }) => error ? toast(error.message, true) : exams()));
+}
+function eForm(x = {}) {
+  const m = modal(`<h2>${x.id ? 'Edit' : 'Create'} exam</h2>
+  <label>Title</label><input id="et" value="${esc(x.title)}">
+  <div class="row"><div><label>Class</label><select id="ec">${opts(CLASSES, x.class_level)}</select></div><div><label>Subject (same spelling as the bank)</label><input id="es" value="${esc(x.subject)}"></div></div>
+  <div class="row"><div><label>Term</label><select id="etm">${opts(['First Term', 'Second Term', 'Third Term'], x.term)}</select></div><div><label>Duration (minutes)</label><input id="ed" type="number" value="${x.duration_min || 30}"></div>
+  <div><label>Pass mark (%)</label><input id="ep" type="number" value="${x.pass_mark ?? 50}"></div></div>
+  <div class="row"><div><label>Starts (optional)</label><input id="est" type="datetime-local" value="${loc(x.start_at)}"></div><div><label>Ends (optional)</label><input id="een" type="datetime-local" value="${loc(x.end_at)}"></div></div>
+  <div class="row"><div><label>Access code (optional)</label><input id="eac" value="${esc(x.access_code)}"></div><div><label>Question source</label><select id="emode"><option value="r">Random from bank</option><option value="m" ${x.question_ids ? 'selected' : ''}>Pick manually</option></select></div></div>
+  <div id="rnd" class="row"><div><label>Number of questions</label><input id="en" type="number" value="${x.num_questions || 20}"></div><div><label>Only this topic (optional)</label><input id="etp" value="${esc(x.topic_filter)}"></div></div>
+  <div id="man" class="hide"><p id="mc" class="mute"></p><div id="mlist" class="scroll" style="max-height:240px"></div></div>
+  <label>Instructions</label><textarea id="ei" rows="3">${esc(x.instructions)}</textarea>
+  <label><input type="checkbox" id="erv" style="width:auto;min-height:0" ${x.show_review ? 'checked' : ''}> Let students review answers after submitting</label>
+  <label><input type="checkbox" id="epb" style="width:auto;min-height:0" ${x.published ? 'checked' : ''}> Publish now</label>
+  <div class="row"><button id="esave">Save exam</button><button class="alt" id="ex">Cancel</button></div>`);
+  let chosen = new Set(x.question_ids || []);
+  const mode = () => { const man = $('#emode', m).value === 'm'; $('#rnd', m).classList.toggle('hide', man); $('#man', m).classList.toggle('hide', !man); if (man) loadPick(); };
+  async function loadPick() {
+    const { data } = await sb.from('questions').select('id,question,topic,difficulty').eq('class_level', $('#ec', m).value).ilike('subject', $('#es', m).value.trim() || '%').limit(400);
+    $('#mlist', m).innerHTML = (data || []).map(q => `<label style="display:flex;gap:8px;color:var(--ink)"><input type="checkbox" style="width:auto;min-height:0" value="${q.id}" ${chosen.has(q.id) ? 'checked' : ''}><span>${fmt(q.question).slice(0, 110)} <span class="mute">(${esc(q.topic || '-')}, ${q.difficulty})</span></span></label>`).join('') || '<p class="mute">No questions for this class and subject.</p>';
+    $$('#mlist input', m).forEach(c => c.onchange = () => { c.checked ? chosen.add(c.value) : chosen.delete(c.value); $('#mc', m).textContent = chosen.size + ' selected'; });
+    $('#mc', m).textContent = chosen.size + ' selected';
+  }
+  $('#emode', m).onchange = mode; $('#ec', m).onchange = $('#es', m).onchange = () => $('#emode', m).value === 'm' && loadPick(); mode();
+  $('#ex', m).onclick = () => m.remove();
+  $('#esave', m).onclick = e => run(e.target, async () => {
+    const man = $('#emode', m).value === 'm';
+    const r = { title: $('#et', m).value.trim(), class_level: $('#ec', m).value, subject: $('#es', m).value.trim(), term: $('#etm', m).value, duration_min: +$('#ed', m).value || 30, pass_mark: +$('#ep', m).value || 50,
+      start_at: $('#est', m).value ? new Date($('#est', m).value).toISOString() : null, end_at: $('#een', m).value ? new Date($('#een', m).value).toISOString() : null,
+      access_code: $('#eac', m).value.trim() || null, instructions: $('#ei', m).value.trim() || null, show_review: $('#erv', m).checked, published: $('#epb', m).checked,
+      question_ids: man ? [...chosen] : null, num_questions: man ? chosen.size : (+$('#en', m).value || 20), topic_filter: man ? null : ($('#etp', m).value.trim() || null) };
+    if (!r.title || !r.subject) return toast('Title and subject are required.', true);
+    if (man && !chosen.size) return toast('Pick at least one question.', true);
+    const { error } = x.id ? await sb.from('exams').update(r).eq('id', x.id) : await sb.from('exams').insert(r);
+    if (error) return toast(error.message, true); m.remove(); toast('Exam saved'); exams();
+  });
+}
+
+// ================= STUDENTS =================
+async function students() {
+  $('#main').innerHTML = `<div class="card"><h2>Register students in bulk</h2><p>CSV columns: <b>Username, Full Name, Password, Class</b> (password at least 6 characters).</p>
+  <div class="row"><button class="alt" id="sTpl">Download CSV template</button></div><label>Upload CSV</label><input type="file" id="sFile" accept=".csv"><div id="sOut"></div></div>
+  <div class="card"><div class="row"><select id="sc"><option value="">All classes</option>${opts(CLASSES)}</select></div><div class="scroll" id="sList"></div></div>`;
+  $('#sTpl').onclick = () => dl('students-template.csv', 'Username,Full Name,Password,Class\nade001,Ade Bello,pass1234,JSS1\nchi002,Chioma Okoro,pass1234,SS2');
+  $('#sFile').onchange = e => regStudents(e.target.files[0]);
+  $('#sc').onchange = listStudents; listStudents();
+}
+async function listStudents() {
+  let q = sb.from('profiles').select('username,full_name,class_level').eq('role', 'student').order('class_level').order('full_name').limit(1000); if ($('#sc').value) q = q.eq('class_level', $('#sc').value);
+  const { data } = await q; $('#sList').innerHTML = `<p class="mute">${(data || []).length} student(s)</p><table><tr><th>Username</th><th>Name</th><th>Class</th></tr>${(data || []).map(s => `<tr><td>${esc(s.username)}</td><td>${esc(s.full_name)}</td><td>${s.class_level || ''}</td></tr>`).join('')}</table>`;
+}
+async function regStudents(f) {
+  if (!f) return; const rows = parseCSV(await f.text()); rows.shift();
+  const sec = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+  let ok = 0, bad = []; $('#sOut').innerHTML = '<p class="mute">Registering…</p>';
+  for (const [i, r] of rows.entries()) {
+    const [u, n, pw, c] = r.map(v => (v || '').trim()), cls = c.toUpperCase().replace(/\s+/g, '');
+    if (!u || !n || pw.length < 6 || !CLASSES.includes(cls)) { bad.push(`Row ${i + 2} (${u || 'blank'}): needs username, name, 6+ char password and a valid class`); continue; }
+    const { error } = await sec.auth.signUp({ email: u.toLowerCase() + '@' + CFG.EMAIL_DOMAIN, password: pw, options: { data: { full_name: n, class_level: cls } } });
+    error ? bad.push(`Row ${i + 2} (${u}): ${error.message}`) : ok++;
+    $('#sOut').innerHTML = `<p class="mute">Registered ${ok} of ${rows.length}…</p>`;
+    await new Promise(r => setTimeout(r, 350));
+  }
+  $('#sOut').innerHTML = `<p><b>${ok}</b> student(s) registered.</p>${bad.length ? `<p class="err">${bad.length} problem(s):</p><ul>${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul><p class="mute">If every row says "rate limit", wait a few minutes and upload the failed rows again.</p>` : ''}`;
+  listStudents();
+}
+
+// ================= RESULTS =================
+const grade = p => p >= 70 ? 'A' : p >= 60 ? 'B' : p >= 50 ? 'C' : p >= 45 ? 'D' : p >= 40 ? 'E' : 'F';
+async function results() {
+  const { data } = await sb.from('exams').select('id,title,class_level,subject,term,pass_mark').order('created_at', { ascending: false });
+  $('#main').innerHTML = `<div class="card"><label>Choose exam</label><select id="rx"><option value="">Select…</option>${(data || []).map(x => `<option value="${x.id}">${esc(x.title)} (${x.class_level} ${esc(x.subject)})</option>`).join('')}</select>
+  <div class="row" style="margin-top:10px"><button class="alt" id="rAll">Export ALL results (Excel)</button></div></div><div id="rOut"></div>`;
+  $('#rx').onchange = () => $('#rx').value && showResults(data.find(x => x.id === $('#rx').value));
+  $('#rAll').onclick = e => run(e.target, exportAll);
+}
+async function showResults(ex) {
+  const { data, error } = await sb.from('attempts').select('*,profiles(full_name,username)').eq('exam_id', ex.id).not('submitted_at', 'is', null);
+  if (error) return toast(error.message, true);
+  const rows = data.map(a => ({ ...a, pct: a.total ? +(a.score / a.total * 100).toFixed(1) : 0 })).sort((a, b) => b.pct - a.pct);
+  let pos = 0, last = null; rows.forEach((r, i) => { if (r.pct !== last) { pos = i + 1; last = r.pct; } r.pos = pos; r.pass = r.pct >= ex.pass_mark; });
+  const n = rows.length, avg = n ? (rows.reduce((s, r) => s + r.pct, 0) / n).toFixed(1) : 0;
+  $('#rOut').innerHTML = n ? `<div class="card"><div class="row"><div><b>${n}</b><br><span class="mute">Submitted</span></div><div><b>${avg}%</b><br><span class="mute">Average</span></div><div><b>${rows[0].pct}%</b><br><span class="mute">Highest</span></div><div><b>${rows[n - 1].pct}%</b><br><span class="mute">Lowest</span></div><div><b>${Math.round(rows.filter(r => r.pass).length / n * 100)}%</b><br><span class="mute">Pass rate</span></div></div>
+  <div class="row" style="margin-top:10px"><button id="rX">Export Excel</button><button class="alt" id="rP">Print / save as PDF</button><button class="alt" id="rS">Print result slips</button></div></div>
+  <div class="card scroll"><table><tr><th>Pos</th><th>Name</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th><th>Tab exits</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}</td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td><span class="badge ${r.pass ? 'ok' : 'bad'}">${r.pass ? 'Pass' : 'Fail'}</span></td><td>${r.tab_switches || 0}</td></tr>`).join('')}</table></div><div id="qa"></div>` : '<div class="card">No submissions yet for this exam.</div>';
+  if (!n) return;
+  const sheet = rows.map(r => ({ Position: r.pos, Username: r.profiles?.username, Name: r.profiles?.full_name, Class: ex.class_level, Subject: ex.subject, Term: ex.term, Score: r.score, Total: r.total, Percent: r.pct, Grade: grade(r.pct), Result: r.pass ? 'Pass' : 'Fail', 'Tab exits': r.tab_switches || 0 }));
+  $('#rX').onclick = () => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet), 'Results'); XLSX.writeFile(wb, `${ex.title}-results.xlsx`); };
+  $('#rP').onclick = () => printOut(`<h2>${esc(CFG.SCHOOL)}</h2><h3>${esc(ex.title)} — ${ex.class_level} ${esc(ex.subject)} ${esc(ex.term || '')}</h3><p>Class average ${avg}% · Highest ${rows[0].pct}% · Lowest ${rows[n - 1].pct}%</p><table><tr><th>Pos</th><th>Name</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}</td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td>${r.pass ? 'Pass' : 'Fail'}</td></tr>`).join('')}</table>`);
+  $('#rS').onclick = () => printOut(rows.map(r => `<div class="slip"><h2 style="text-align:center">${esc(CFG.SCHOOL)}</h2><h3 style="text-align:center">Result slip</h3><p><b>Student:</b> ${esc(r.profiles?.full_name)} (${esc(r.profiles?.username)})<br><b>Class:</b> ${ex.class_level}<br><b>Exam:</b> ${esc(ex.title)} — ${esc(ex.subject)} ${esc(ex.term || '')}<br><b>Score:</b> ${r.score}/${r.total} (${r.pct}%)<br><b>Grade:</b> ${grade(r.pct)} · <b>Position:</b> ${r.pos} of ${n} · <b>Remark:</b> ${r.pass ? 'Pass' : 'Fail'}</p><p style="margin-top:30px">Teacher's signature: ____________________</p></div>`).join(''));
+  // question analysis
+  const ids = [...new Set(rows.flatMap(r => r.question_order))];
+  const { data: qs } = await sb.from('questions').select('id,question,correct,topic').in('id', ids);
+  const st = (qs || []).map(q => { const wrong = rows.filter(r => r.answers[q.id] !== q.correct).length; return { q, wrong, p: Math.round(wrong / rows.filter(r => r.question_order.includes(q.id)).length * 100) }; }).sort((a, b) => b.p - a.p).slice(0, 10);
+  $('#qa').innerHTML = `<div class="card scroll"><h3>Most missed questions</h3><table><tr><th>Question</th><th>Topic</th><th>Missed</th></tr>${st.map(s => `<tr><td>${fmt(s.q.question).slice(0, 120)}</td><td>${esc(s.q.topic || '-')}</td><td>${s.p}%</td></tr>`).join('')}</table></div>`;
+}
+function printOut(html) { $('#slips').innerHTML = html; document.body.classList.add('ps'); window.onafterprint = () => document.body.classList.remove('ps'); print(); }
+async function exportAll() {
+  const { data, error } = await sb.from('attempts').select('score,total,tab_switches,exams(title,class_level,subject,term,pass_mark),profiles(full_name,username)').not('submitted_at', 'is', null);
+  if (error) return toast(error.message, true); if (!data.length) return toast('No results yet.', true);
+  const sh = data.map(a => { const p = a.total ? +(a.score / a.total * 100).toFixed(1) : 0; return { Class: a.exams.class_level, Subject: a.exams.subject, Term: a.exams.term, Exam: a.exams.title, Username: a.profiles.username, Name: a.profiles.full_name, Score: a.score, Total: a.total, Percent: p, Grade: grade(p), Result: p >= a.exams.pass_mark ? 'Pass' : 'Fail' }; })
+    .sort((a, b) => a.Class.localeCompare(b.Class) || a.Subject.localeCompare(b.Subject) || b.Percent - a.Percent);
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh), 'All results'); XLSX.writeFile(wb, 'all-results.xlsx');
+}
+boot();
+</script>
+</body>
+</html>

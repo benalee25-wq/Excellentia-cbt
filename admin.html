@@ -23,7 +23,7 @@
 </section>
 
 <div id="vApp" class="hide">
-  <header class="top"><div class="logo"></div><div class="t"><b class="school"></b><small>Admin</small></div>
+  <header class="top"><button id="bBack" class="hide" aria-label="Go back" style="font-size:1.4rem;padding:4px 12px">←</button><div class="logo"></div><div class="t"><b class="school"></b><small>Admin</small></div>
     <button class="themebtn">◐</button><button id="bOut">Sign out</button></header>
   <nav class="tabs" id="tabs">
     <button data-t="bank">Questions</button><button data-t="upload">Upload</button><button data-t="exams">Exams</button>
@@ -51,7 +51,7 @@ $('#bLogin').onclick = e => run(e.target, async () => {
   boot();
 });
 $('#p').onkeydown = e => e.key === 'Enter' && $('#bLogin').click();
-$('#bOut').onclick = async () => { await sb.auth.signOut(); show('vLogin'); };
+$('#bOut').onclick = async () => { await sb.auth.signOut(); hist.length = 0; show('vLogin'); };
 async function boot() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return show('vLogin');
@@ -61,7 +61,19 @@ async function boot() {
   show('vApp'); go(tab);
 }
 $$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.t));
-function go(t) { tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t)); ({ bank, upload, exams, students, results })[t](); }
+const hist = [];                                  // tabs visited, for the back arrow and the phone's Back button
+function go(t, pop) {
+  tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  if (!pop && hist[hist.length - 1] !== t) { hist.push(t); history[hist.length === 1 ? 'replaceState' : 'pushState']({ t }, '', '#' + t); }
+  $('#bBack').classList.toggle('hide', hist.length < 2);
+  ({ bank, upload, exams, students, results })[t]();
+}
+$('#bBack').onclick = () => history.back();
+window.addEventListener('popstate', () => {
+  if ($('#vApp').classList.contains('hide')) return;
+  $$('.modal').forEach(m => m.remove());
+  if (hist.length > 1) { hist.pop(); go(hist[hist.length - 1], true); }
+});
 
 // ================= QUESTION BANK =================
 async function bank() {

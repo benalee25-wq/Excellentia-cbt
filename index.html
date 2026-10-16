@@ -69,7 +69,7 @@ async function boot(fresh) {
   if (!session) return show('vLogin');
   const { data: p } = await sb.from('profiles').select('*').eq('id', session.user.id).single();
   if (!p) { toast('Profile missing. Ask your teacher.', true); return show('vLogin'); }
-  if (p.role === 'admin') { location.href = 'admin.html'; return; }
+  if (p.role === 'admin') { await sb.auth.signOut(); show('vLogin'); $('#lerr').textContent = 'This is a teacher account. Teachers sign in on the admin page.'; return; }
   me = p;
   if (fresh || !tok()) { localStorage.setItem(TOK_KEY, crypto.randomUUID()); await sb.rpc('claim_session', { tok: tok() }); }
   $('#who').textContent = `${p.full_name} · ${p.class_level}`;

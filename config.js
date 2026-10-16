@@ -12,7 +12,10 @@ const CLASSES = ['JSS1','JSS2','JSS3','SS1','SS2','SS3'];
 document.documentElement.style.setProperty('--green', CFG.GREEN);
 document.documentElement.style.setProperty('--gold', CFG.GOLD);
 
-const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY);
+// Teacher page and student page keep separate saved logins, so one never signs the other out
+const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, {
+  auth: { storageKey: /admin\.html/.test(location.pathname) ? 'cbt-admin-auth' : 'cbt-student-auth' }
+});
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

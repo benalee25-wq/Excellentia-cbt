@@ -7,7 +7,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.sheetjs.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tdokuihifeihuuiaabsk.supabase.co; connect-src https://tdokuihifeihuuiaabsk.supabase.co; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <script>if (top !== self) { document.documentElement.innerHTML = ''; top.location = self.location; }</script>
 <link rel="stylesheet" href="style.css">
-<style>#slips{display:none}@media print{body.ps>*:not(#slips){display:none!important}body.ps #slips{display:block}}</style>
+<style>.lslip{display:inline-block;vertical-align:top;box-sizing:border-box;width:48%;margin:0 1% 10px 0;padding:10px;border:1px dashed #000;break-inside:avoid;font-size:14px}#slips{display:none}@media print{body.ps>*:not(#slips){display:none!important}body.ps #slips{display:block}}</style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
@@ -277,17 +277,38 @@ function eForm(x = {}) {
 
 // ================= STUDENTS =================
 async function students() {
-  $('#main').innerHTML = `<div id="rq"></div><div class="card"><h2>Register students in bulk</h2><p>CSV columns: <b>Username, Full Name, Password, Class</b>. Leave Password empty to auto-generate a safe one (or use 8+ characters).</p>
+  $('#main').innerHTML = `<div id="rq"></div><div class="card"><h3>Login sheet</h3><p class="mute">Gives every student in the chosen class a NEW random password, then lets you download or print all the logins. Old passwords stop working.</p>
+  <div class="row"><select id="bc"><option value="">All classes</option>${opts(CLASSES)}</select><button class="gold" id="bBulk">Generate logins</button></div><div id="bulkOut"></div></div><div class="card"><h2>Register students in bulk</h2><p>CSV columns: <b>Username, Full Name, Password, Class</b>. Leave Password empty to auto-generate a safe one (or use 8+ characters).</p>
   <div class="row"><button class="alt" id="sTpl">Download CSV template</button></div><label>Upload CSV</label><input type="file" id="sFile" accept=".csv"><div id="sOut"></div></div>
   <div class="card"><div class="row"><select id="sc"><option value="">All classes</option>${opts(CLASSES)}</select></div><div class="scroll" id="sList"></div></div>`;
   $('#sTpl').onclick = () => dl('students-template.csv', 'Username,Full Name,Password,Class\nade001,Ade Bello,,JSS1\nchi002,Chioma Okoro,,SS2');
   $('#sFile').onchange = e => regStudents(e.target.files[0]);
   $('#sc').onchange = listStudents; listStudents(); loadReq();
+  $('#bBulk').onclick = e => run(e.target, bulkReset);
 }
 async function listStudents() {
   let q = sb.from('profiles').select('username,full_name,class_level').eq('role', 'student').order('class_level').order('full_name').limit(1000); if ($('#sc').value) q = q.eq('class_level', $('#sc').value);
   const { data } = await q; $('#sList').innerHTML = `<p class="mute">${(data || []).length} student(s)</p><table><tr><th>Username</th><th>Name</th><th>Class</th><th></th></tr>${(data || []).map(s => `<tr><td>${esc(s.username)}</td><td>${esc(s.full_name)}</td><td>${esc(s.class_level || '')}</td><td><button class="alt sm" data-rs="${esc(s.username)}">Reset password</button></td></tr>`).join('')}</table>`;
   $$('[data-rs]').forEach(b => b.onclick = () => resetPw(b.dataset.rs));
+}
+async function bulkReset() {
+  const cls = $('#bc').value;
+  let q = sb.from('profiles').select('username,full_name,class_level').eq('role', 'student').order('full_name').limit(1000);
+  if (cls) q = q.eq('class_level', cls);
+  const { data, error } = await q; if (error) return toast(error.message, true);
+  if (!data.length) return toast('No students found.', true);
+  if (!confirm(`This gives ${data.length} student(s)${cls ? ' in ' + cls : ''} NEW passwords. Their old passwords stop working. Continue?`)) return;
+  const out = [], bad = [];
+  for (const [i, s] of data.entries()) {
+    const pw = genPw(), { error: e } = await sb.rpc('admin_reset_password', { uname: s.username, newpass: pw });
+    if (e) bad.push(`${s.username}: ${e.message}`); else out.push([s.username, s.full_name, pw, s.class_level || '']);
+    $('#bulkOut').innerHTML = `<p class="mute">Working… ${i + 1} of ${data.length}</p>`;
+  }
+  $('#bulkOut').innerHTML = `<p><b>${out.length}</b> new login(s) ready.</p>${out.length ? '<div class="row"><button class="gold" id="bDl">Download login sheet (CSV)</button><button class="alt" id="bPr">Print login slips</button></div><p class="mute">Passwords are shown only now. Give each student only their own details, then delete the file or slips.</p>' : ''}${bad.length ? `<p class="err">${bad.length} problem(s):</p><ul>${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}`;
+  if (!out.length) return;
+  const site = location.origin + location.pathname.replace(/admin\.html$/, '');
+  $('#bDl').onclick = () => dl('student-logins.csv', ['Username,Full Name,Password,Class', ...out.map(r => r.map(csvCell).join(','))].join('\n'));
+  $('#bPr').onclick = () => printOut(`<h3>${esc(CFG.SCHOOL)}: student logins${cls ? ' (' + esc(cls) + ')' : ''}</h3>` + out.map(r => `<div class="lslip"><b>${esc(CFG.SCHOOL)}</b><br><b>Name:</b> ${esc(r[1])}<br><b>Class:</b> ${esc(r[3])}<br><b>Username:</b> ${esc(r[0])}<br><b>Password:</b> ${esc(r[2])}<br><b>Sign in at:</b> ${esc(site)}</div>`).join(''));
 }
 async function resetPw(u) {
   let np = prompt(`New password for ${u}.\nLeave empty to generate a random one (recommended):`); if (np === null) return;

@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CBT</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net ; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tdokuihifeihuuiaabsk.supabase.co; connect-src https://tdokuihifeihuuiaabsk.supabase.co; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<script>if (top !== self) { document.documentElement.innerHTML = ''; top.location = self.location; }</script>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 </head>
@@ -60,7 +62,7 @@ $('#bReq').onclick = e => run(e.target, async () => {
   const { error } = await sb.rpc('request_reset', { uname: u }); if (error) throw error;
   $('#fmsg').textContent = 'Request sent. Tell your teacher your name so they can give you a new password.';
 });
-$('#bOut').onclick = async () => { if (ex && !confirm('Leave the exam? Your answers are saved and you can resume.')) return; clearInterval(tick); ex = null; await sb.auth.signOut(); show('vLogin'); };
+$('#bOut').onclick = async () => { if (ex && !confirm('Leave the exam? Your answers are saved and you can resume.')) return; clearInterval(tick); ex = null; localStorage.removeItem(TOK_KEY); await sb.auth.signOut(); show('vLogin'); };
 
 async function boot(fresh) {
   const { data: { session } } = await sb.auth.getSession();
@@ -85,14 +87,29 @@ async function dash() {
   const soon = data.filter(x => !x.submitted_at && x.start_at && new Date(x.start_at) > now);
   const missed = data.filter(x => !x.submitted_at && x.end_at && new Date(x.end_at) < now);
   const card = (x, body) => `<div class="card"><h3>${esc(x.title)}</h3><p class="mute">${esc(x.subject)}${x.term ? ' · ' + esc(x.term) : ''} · ${x.duration_min} min · ${x.num_questions} questions</p>${body}</div>`;
-  let h = `<h2>Ready to take</h2>`;
+  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
   h += open.map(x => card(x, `${x.attempt_id ? '<span class="badge gold">In progress</span> ' : ''}${x.end_at ? `<p class="mute">Closes ${fm(x.end_at)}</p>` : ''}<button data-go="${x.id}" data-code="${x.has_code}">${x.attempt_id ? 'Resume exam' : 'Start exam'}</button>`)).join('') || '<p class="mute">No exam is open right now.</p>';
   if (soon.length) h += `<h2>Upcoming</h2>` + soon.map(x => card(x, `<p>Opens ${fm(x.start_at)}</p>`)).join('');
   if (done.length) h += `<h2>Completed</h2>` + done.map(x => { const pc = x.total ? Math.round(x.score / x.total * 100) : 0; return card(x, `<p><b>${x.score}/${x.total}</b> (${pc}%) <span class="badge ${pc >= x.pass_mark ? 'ok' : 'bad'}">${pc >= x.pass_mark ? 'Passed' : 'Not passed'}</span></p>${x.show_review ? `<button class="alt sm" data-rev="${x.attempt_id}">Review answers</button>` : ''}`); }).join('');
   if (missed.length) h += `<h2>Missed</h2>` + missed.map(x => card(x, `<p class="mute">Closed ${fm(x.end_at)}</p>`)).join('');
   $('#main').innerHTML = h;
+  $('#bPw').onclick = changePw;
   $$('[data-go]').forEach(b => b.onclick = () => begin(b, b.dataset.go, b.dataset.code === 'true' && !data.find(x => x.id === b.dataset.go).attempt_id));
   $$('[data-rev]').forEach(b => b.onclick = () => review(b.dataset.rev));
+}
+
+function changePw() {
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div><h2>Change password</h2><label for="np1">New password (8 or more characters)</label><input id="np1" type="password" autocomplete="new-password">
+  <label for="np2">Type it again</label><input id="np2" type="password" autocomplete="new-password">
+  <div class="row" style="margin-top:12px"><button id="npok">Save</button><button class="alt" id="npx">Cancel</button></div></div>`;
+  document.body.append(m); $('#npx').onclick = () => m.remove();
+  $('#npok').onclick = e => run(e.target, async () => {
+    const a = $('#np1').value; if (a.length < 8) return toast('Use at least 8 characters.', true);
+    if (a !== $('#np2').value) return toast('The two passwords do not match.', true);
+    const { error } = await sb.auth.updateUser({ password: a }); if (error) return toast(error.message, true);
+    m.remove(); toast('Password changed.');
+  });
 }
 
 // ---------- exam ----------
@@ -143,7 +160,6 @@ function renderExam() {
   tickUI();
 }
 function persist() {          // autosave: local copy instantly, server shortly after
-  localStorage.setItem('cbt-' + ex.attempt_id, JSON.stringify({ a: ex.ans, f: [...ex.flags] }));
   clearTimeout(saveT); saveT = setTimeout(sync, 600);
 }
 async function sync() {

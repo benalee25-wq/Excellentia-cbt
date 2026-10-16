@@ -66,3 +66,9 @@ function parseCSV(text) {            // small RFC4180 parser
 // Show / hide password button on login forms
 (() => { const b = $('#sp'), p = $('#p'); if (!b || !p) return;
   b.onclick = () => { const hide = p.type === 'password'; p.type = hide ? 'text' : 'password'; b.textContent = hide ? 'Hide' : 'Show'; p.focus(); }; })();
+
+// Random password without look-alike characters (0/O, 1/l/I)
+function genPw(n = 8) {
+  const A = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return [...crypto.getRandomValues(new Uint32Array(n))].map(v => A[v % A.length]).join('');
+}

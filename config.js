@@ -14,7 +14,7 @@ document.documentElement.style.setProperty('--gold', CFG.GOLD);
 
 // Teacher page and student page keep separate saved logins, so one never signs the other out
 const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, {
-  auth: { storageKey: /admin\.html/.test(location.pathname) ? 'cbt-admin-auth' : 'cbt-student-auth' }
+  auth: { storageKey: /\/admin(\.html)?\/?$/.test(location.pathname) ? 'cbt-admin-auth' : 'cbt-student-auth' }
 });
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -38,13 +38,13 @@ function toast(msg, bad) {
 function busy(btn, on) { btn.disabled = on; btn.dataset.l = btn.dataset.l || btn.textContent; btn.textContent = on ? 'Please wait…' : btn.dataset.l; }
 async function run(btn, fn) {
   try { busy(btn, true); return await fn(); }
-  catch (e) { toast(e.message || String(e), true); }
+  catch (e) { toast(friendly(e.message || String(e)), true); }
   finally { busy(btn, false); }
 }
 function brand() {
   $$('.school').forEach(e => e.textContent = CFG.SCHOOL);
   $$('.motto').forEach(e => e.textContent = CFG.MOTTO);
-  $$('.logo').forEach(e => { if (CFG.LOGO) e.innerHTML = `<img src="${CFG.LOGO}" alt="">`; else e.textContent = CFG.SCHOOL[0]; });
+  $$('.logo').forEach(e => { if (CFG.LOGO) { const im = document.createElement('img'); im.src = CFG.LOGO; im.alt = ''; e.replaceChildren(im); } else e.textContent = CFG.SCHOOL[0]; });
   document.title = CFG.SCHOOL + ' — CBT';
 }
 function theme() {
@@ -75,3 +75,12 @@ function genPw(n = 8) {
   const A = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   return [...crypto.getRandomValues(new Uint32Array(n))].map(v => A[v % A.length]).join('');
 }
+
+// Show our own clear messages, but hide raw database/internal error text from users
+function friendly(m) {
+  m = String(m || '');
+  if (/^(Exam |This exam|You have already|Wrong access|No questions|Too many|Not allowed|Password must|User not found|Student not found|You cannot reset|Registration is closed|Review is not|Attempt not|Not available|Too much|The network|Timed out|Invalid login|Password should|New password|User already|Request rate|.*rate limit|You signed in)/i.test(m)) return m;
+  console.error(m); return 'Something went wrong. Please try again, or tell your teacher.';
+}
+// Stop spreadsheet formula injection: text that starts with = + - @ is shown as text
+const safeCell = v => (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) ? "'" + v : v;

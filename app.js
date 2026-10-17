@@ -68,7 +68,7 @@ function changePw() {
     const { data: { user } } = await sb.auth.getUser();
     const { error: e0 } = await sb.auth.signInWithPassword({ email: user.email, password: $('#np0').value });
     if (e0) return toast('Your current password is not correct.', true);
-    const { error } = await sb.auth.updateUser({ password: n }); if (error) return toast(friendly(error.message), true);
+    const { error } = await sb.auth.updateUser({ password: n, current_password: $('#np0').value });   // works whether or not Supabase requires the current password if (error) return toast(friendly(error.message), true);
     m.remove(); toast('Password changed.');
   });
 }

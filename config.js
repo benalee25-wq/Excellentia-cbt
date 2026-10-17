@@ -84,3 +84,6 @@ function friendly(m) {
 }
 // Stop spreadsheet formula injection: text that starts with = + - @ is shown as text
 const safeCell = v => (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) ? "'" + v : v;
+
+// "JSS 1A Diamond" when a section is known, otherwise "JSS1"
+const classLabel = p => (p && p.section) ? ((p.class_level || '').replace(/\d+$/, '') + ' ' + p.section).trim() : ((p && p.class_level) || '');

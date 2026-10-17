@@ -29,7 +29,7 @@ async function boot(fresh) {
   if (p.role === 'admin') { await sb.auth.signOut(); show('vLogin'); $('#lerr').textContent = 'This is a teacher account. Teachers sign in on the admin page.'; return; }
   me = p;
   if (fresh || !tok()) { localStorage.setItem(TOK_KEY, crypto.randomUUID()); await sb.rpc('claim_session', { tok: tok() }); }
-  $('#who').textContent = `${p.full_name} · ${p.class_level}`;
+  $('#who').textContent = `${p.full_name} · ${classLabel(p)}`;
   show('vApp'); dash();
 }
 

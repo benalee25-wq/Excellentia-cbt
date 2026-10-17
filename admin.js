@@ -247,38 +247,51 @@ function eForm(x = {}) {
 // ================= STUDENTS =================
 async function students() {
   $('#main').innerHTML = `<div id="rq"></div><div class="card"><h3>Login sheet</h3><p class="mute">Gives every student in the chosen class a NEW random password, then lets you download or print all the logins. Old passwords stop working.</p>
-  <div class="row"><select id="bc"><option value="">All classes</option>${opts(CLASSES)}</select><button class="gold" id="bBulk">Generate logins</button></div><div id="bulkOut"></div></div><div class="card"><h2>Register students in bulk</h2><p>CSV columns: <b>Username, Full Name, Password, Class</b>. Leave Password empty to auto-generate a safe one (or use 8+ characters).</p>
+  <div class="row"><select id="bc"><option value="">All classes</option>${opts(CLASSES)}</select><select id="bs"><option value="">All sections</option></select><button class="gold" id="bBulk">Generate logins</button></div><div id="bulkOut"></div></div><div class="card"><h2>Register students in bulk</h2><p>CSV columns: <b>Username, Full Name, Password, Class</b>, and optional <b>Section</b> (like 1A Diamond). Leave Password empty to auto-generate a safe one (or use 8+ characters).</p>
   <div class="row"><button class="alt" id="sTpl">Download CSV template</button></div><label>Upload CSV</label><input type="file" id="sFile" accept=".csv"><div id="sOut"></div></div>
-  <div class="card"><div class="row"><select id="sc"><option value="">All classes</option>${opts(CLASSES)}</select></div><div class="scroll" id="sList"></div></div>`;
-  $('#sTpl').onclick = () => dl('students-template.csv', 'Username,Full Name,Password,Class\nade001,Ade Bello,,JSS1\nchi002,Chioma Okoro,,SS2');
+  <div class="card"><div class="row"><select id="sc"><option value="">All classes</option>${opts(CLASSES)}</select><select id="ss"><option value="">All sections</option></select></div><div class="scroll" id="sList"></div></div>`;
+  $('#sTpl').onclick = () => dl('students-template.csv', 'Username,Full Name,Password,Class,Section\nade001,Ade Bello,,JSS1,1A Diamond\nchi002,Chioma Okoro,,SS2,2B');
   $('#sFile').onchange = e => regStudents(e.target.files[0]);
-  $('#sc').onchange = listStudents; listStudents(); loadReq();
+  $('#sc').onchange = listStudents; $('#ss').onchange = listStudents; listStudents(); loadReq(); loadSections();
   $('#bBulk').onclick = e => run(e.target, bulkReset);
 }
+async function loadSections() {
+  const { data } = await sb.from('profiles').select('section').eq('role', 'student').not('section', 'is', null).limit(2000);
+  const secs = [...new Set((data || []).map(x => x.section))].sort();
+  $$('#bs, #ss').forEach(s => s.innerHTML = '<option value="">All sections</option>' + secs.map(x => `<option>${esc(x)}</option>`).join(''));
+}
 async function listStudents() {
-  let q = sb.from('profiles').select('username,full_name,class_level').eq('role', 'student').order('class_level').order('full_name').limit(1000); if ($('#sc').value) q = q.eq('class_level', $('#sc').value);
-  const { data } = await q; $('#sList').innerHTML = `<p class="mute">${(data || []).length} student(s)</p><table><tr><th>Username</th><th>Name</th><th>Class</th><th></th></tr>${(data || []).map(s => `<tr><td>${esc(s.username)}</td><td>${esc(s.full_name)}</td><td>${esc(s.class_level || '')}</td><td><button class="alt sm" data-rs="${esc(s.username)}">Reset password</button> <button class="bad sm" data-del="${esc(s.username)}">Delete</button></td></tr>`).join('')}</table>`;
+  let q = sb.from('profiles').select('username,full_name,class_level,section').eq('role', 'student').order('class_level').order('section').order('full_name').limit(1000); if ($('#sc').value) q = q.eq('class_level', $('#sc').value); if ($('#ss').value) q = q.eq('section', $('#ss').value);
+  const { data } = await q; $('#sList').innerHTML = `<p class="mute">${(data || []).length} student(s)</p><table><tr><th>Username</th><th>Name</th><th>Class</th><th></th></tr>${(data || []).map(s => `<tr><td>${esc(s.username)}</td><td>${esc(s.full_name)}</td><td>${esc(classLabel(s))}</td><td><button class="alt sm" data-rs="${esc(s.username)}">Reset password</button> <button class="bad sm" data-del="${esc(s.username)}">Delete</button></td></tr>`).join('')}</table>`;
   $$('[data-rs]').forEach(b => b.onclick = () => resetPw(b.dataset.rs));
   $$('[data-del]').forEach(b => b.onclick = () => delStudent(b.dataset.del));
 }
 async function bulkReset() {
   const cls = $('#bc').value;
-  let q = sb.from('profiles').select('username,full_name,class_level').eq('role', 'student').order('full_name').limit(1000);
-  if (cls) q = q.eq('class_level', cls);
+  let q = sb.from('profiles').select('username,full_name,class_level,section').eq('role', 'student').order('section').order('full_name').limit(1000);
+  const secSel = $('#bs').value; if (cls) q = q.eq('class_level', cls); if (secSel) q = q.eq('section', secSel);
   const { data, error } = await q; if (error) return toast(friendly(error.message), true);
   if (!data.length) return toast('No students found.', true);
-  if (!confirm(`This gives ${data.length} student(s)${cls ? ' in ' + cls : ''} NEW passwords. Their old passwords stop working. Continue?`)) return;
+  if (!confirm(`This gives ${data.length} student(s)${cls ? ' in ' + cls : ''}${secSel ? ' (' + secSel + ')' : ''} NEW passwords. Their old passwords stop working. Continue?`)) return;
   const out = [], bad = [];
   for (const [i, s] of data.entries()) {
     const pw = genPw(), { error: e } = await sb.rpc('admin_reset_password', { uname: s.username, newpass: pw });
-    if (e) bad.push(`${s.username}: ${e.message}`); else out.push([s.username, s.full_name, pw, s.class_level || '']);
+    if (e) bad.push(`${s.username}: ${e.message}`); else out.push([s.username, s.full_name, pw, s.class_level || '', s.section || '']);
     $('#bulkOut').innerHTML = `<p class="mute">Working… ${i + 1} of ${data.length}</p>`;
   }
   $('#bulkOut').innerHTML = `<p><b>${out.length}</b> new login(s) ready.</p>${out.length ? '<div class="row"><button class="gold" id="bDl">Download login sheet (CSV)</button><button class="alt" id="bPr">Print login slips</button></div><p class="mute">Passwords are shown only now. Give each student only their own details, then delete the file or slips.</p>' : ''}${bad.length ? `<p class="err">${bad.length} problem(s):</p><ul>${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}`;
   if (!out.length) return;
   const site = location.origin + location.pathname.replace(/admin\.html$/, '');
-  $('#bDl').onclick = () => dl('student-logins.csv', ['Username,Full Name,Password,Class', ...out.map(r => r.map(csvCell).join(','))].join('\n'));
-  $('#bPr').onclick = () => printOut(`<h3>${esc(CFG.SCHOOL)}: student logins${cls ? ' (' + esc(cls) + ')' : ''}</h3>` + out.map(r => `<div class="lslip"><b>${esc(CFG.SCHOOL)}</b><br><b>Name:</b> ${esc(r[1])}<br><b>Class:</b> ${esc(r[3])}<br><b>Username:</b> ${esc(r[0])}<br><b>Password:</b> ${esc(r[2])}<br><b>Sign in at:</b> ${esc(site)}</div>`).join(''));
+  $('#bDl').onclick = () => dl('student-logins.csv', ['Username,Full Name,Password,Class,Section', ...out.map(r => r.map(csvCell).join(','))].join('\n'));
+  $('#bPr').onclick = () => {
+    let html = `<h3>${esc(CFG.SCHOOL)}: student logins</h3>`, lastSec = null;
+    out.forEach(r => {
+      const lab = classLabel({ class_level: r[3], section: r[4] });
+      if (r[4] !== lastSec) { html += `<h3 style="margin:12px 0 6px;${lastSec !== null ? 'break-before:page;' : ''}">${esc(lab)}</h3>`; lastSec = r[4]; }
+      html += `<div class="lslip"><b>${esc(CFG.SCHOOL)}</b><br><b>Name:</b> ${esc(r[1])}<br><b>Class:</b> ${esc(lab)}<br><b>Username:</b> ${esc(r[0])}<br><b>Password:</b> ${esc(r[2])}<br><b>Sign in at:</b> ${esc(site)}</div>`;
+    });
+    printOut(html);
+  };
 }
 async function delStudent(u) {
   if (!confirm(`Delete ${u}?\nTheir account and ALL their exam results will be removed. This cannot be undone.\nExport the results to Excel first if you need them.`)) return;
@@ -307,7 +320,7 @@ async function regStudents(f) {
   try {
     const rows = parseCSV((await f.text()).replace(/^\uFEFF/, ''));
     const head = (rows.shift() || []).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
-    const iU = head.findIndex(h => h.includes('user')), iP = head.findIndex(h => h.includes('pass')), iC = head.findIndex(h => h.includes('class'));
+    const iU = head.findIndex(h => h.includes('user')), iP = head.findIndex(h => h.includes('pass')), iC = head.findIndex(h => h.includes('class')), iS = head.findIndex(h => h.includes('section'));
     let iN = head.findIndex(h => h.includes('fullname')); if (iN < 0) iN = head.findIndex(h => h.includes('name') && !h.includes('user'));
     if (iU < 0 || iN < 0 || iC < 0) { out.innerHTML = '<p class="err">The first row must have the headings Username, Full Name, Password and Class. Tap "Download CSV template" and use it.</p>'; return; }
     if (!rows.length) { out.innerHTML = '<p class="err">The file has no students under the headings.</p>'; return; }
@@ -319,23 +332,23 @@ async function regStudents(f) {
     let lock = null; try { lock = await navigator.wakeLock.request('screen'); } catch (e) { }   // keep the screen awake
     try {
       for (let i = 0; i < rows.length; i++) {
-        const r = rows[i], u0 = (r[iU] || '').trim(), u = u0.toLowerCase(), n = (r[iN] || '').trim(), p0 = iP >= 0 ? (r[iP] || '').trim() : '', cls = (r[iC] || '').toUpperCase().replace(/\s+/g, ''), pw = p0 || genPw();
+        const r = rows[i], u0 = (r[iU] || '').trim(), u = u0.toLowerCase(), n = (r[iN] || '').trim(), p0 = iP >= 0 ? (r[iP] || '').trim() : '', cls = (r[iC] || '').toUpperCase().replace(/\s+/g, ''), pw = p0 || genPw(), sec = iS >= 0 ? (r[iS] || '').trim().slice(0, 40) : '';
         if (!/^[a-z0-9._-]{3,30}$/.test(u) || !n || pw.length < 8 || !CLASSES.includes(cls)) { bad.push(`Row ${i + 2} (${u0 || 'blank'}): needs a username (3-30 letters or numbers, no spaces), a name, a class like JSS1, and a password of 8+ characters (or leave it empty)`); continue; }
         if (exist.has(u)) { skipped++; continue; }
         let error = null;
         for (let t = 0; t < 8; t++) {
           out.innerHTML = `<p class="mute">Registering ${i + 1} of ${rows.length}: ${esc(u)} (${ok} done)</p>`;
-          ({ error } = await Promise.race([sec.auth.signUp({ email: u + '@' + CFG.EMAIL_DOMAIN, password: pw, options: { data: { full_name: n, class_level: cls, reg_key: key } } }), wait(25000).then(() => ({ error: { message: 'Timed out. Check the Students list, and use Reset password if this student is there.' } }))]));
+          ({ error } = await Promise.race([sec.auth.signUp({ email: u + '@' + CFG.EMAIL_DOMAIN, password: pw, options: { data: { full_name: n, class_level: cls, section: sec, reg_key: key } } }), wait(25000).then(() => ({ error: { message: 'Timed out. Check the Students list, and use Reset password if this student is there.' } }))]));
           if (!isLimit(error)) break;
           for (let s = 300; s > 0; s--) { out.innerHTML = `<p class="mute">Sign-up limit reached (${ok} done). Waiting ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}, then continuing. Keep this page open.</p>`; await wait(1000); }
         }
-        if (error) bad.push(`Row ${i + 2} (${u}): ${error.message}`); else { ok++; creds.push([u, n, pw, cls]); }
+        if (error) bad.push(`Row ${i + 2} (${u}): ${error.message}`); else { ok++; creds.push([u, n, pw, cls, sec]); }
         await wait(300);
       }
     } finally { if (lock) lock.release().catch(() => { }); await sb.rpc('close_registration'); }   // the key stops working now
   } catch (e) { bad.push('Stopped: ' + (e.message || e)); }
   out.innerHTML = `<p><b>${ok}</b> student(s) registered${skipped ? `, ${skipped} already registered (skipped)` : ''}.</p>${ok ? '<button class="gold" id="bCred">Download login details (CSV)</button><p class="mute">Save the file now: passwords are not shown again. Give each student only their own details, then delete the file.</p>' : ''}${bad.length ? `<p class="err">${bad.length} problem(s):</p><ul>${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}`;
-  if (ok) $('#bCred').onclick = () => dl('student-logins.csv', ['Username,Full Name,Password,Class', ...creds.map(r => r.map(csvCell).join(','))].join('\n'));
+  if (ok) $('#bCred').onclick = () => dl('student-logins.csv', ['Username,Full Name,Password,Class,Section', ...creds.map(r => r.map(csvCell).join(','))].join('\n'));
   listStudents();
 }
 
@@ -349,19 +362,19 @@ async function results() {
   $('#rAll').onclick = e => run(e.target, exportAll);
 }
 async function showResults(ex) {
-  const { data, error } = await sb.from('attempts').select('*,profiles(full_name,username)').eq('exam_id', ex.id).not('submitted_at', 'is', null);
+  const { data, error } = await sb.from('attempts').select('*,profiles(full_name,username,section)').eq('exam_id', ex.id).not('submitted_at', 'is', null);
   if (error) return toast(friendly(error.message), true);
   const rows = data.map(a => ({ ...a, pct: a.total ? +(a.score / a.total * 100).toFixed(1) : 0 })).sort((a, b) => b.pct - a.pct);
   let pos = 0, last = null; rows.forEach((r, i) => { if (r.pct !== last) { pos = i + 1; last = r.pct; } r.pos = pos; r.pass = r.pct >= ex.pass_mark; });
   const n = rows.length, avg = n ? (rows.reduce((s, r) => s + r.pct, 0) / n).toFixed(1) : 0;
   $('#rOut').innerHTML = n ? `<div class="card"><div class="row"><div><b>${n}</b><br><span class="mute">Submitted</span></div><div><b>${avg}%</b><br><span class="mute">Average</span></div><div><b>${rows[0].pct}%</b><br><span class="mute">Highest</span></div><div><b>${rows[n - 1].pct}%</b><br><span class="mute">Lowest</span></div><div><b>${Math.round(rows.filter(r => r.pass).length / n * 100)}%</b><br><span class="mute">Pass rate</span></div></div>
   <div class="row" style="margin-top:10px"><button id="rX">Export Excel</button><button class="alt" id="rP">Print / save as PDF</button><button class="alt" id="rS">Print result slips</button></div></div>
-  <div class="card scroll"><table><tr><th>Pos</th><th>Name</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th><th>Tab exits</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}</td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td><span class="badge ${r.pass ? 'ok' : 'bad'}">${r.pass ? 'Pass' : 'Fail'}</span></td><td>${r.tab_switches || 0}</td></tr>`).join('')}</table></div><div id="qa"></div>` : '<div class="card">No submissions yet for this exam.</div>';
+  <div class="card scroll"><table><tr><th>Pos</th><th>Name</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th><th>Tab exits</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}<br><span class="mute">${esc(classLabel({ class_level: ex.class_level, section: r.profiles?.section }))}</span></td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td><span class="badge ${r.pass ? 'ok' : 'bad'}">${r.pass ? 'Pass' : 'Fail'}</span></td><td>${r.tab_switches || 0}</td></tr>`).join('')}</table></div><div id="qa"></div>` : '<div class="card">No submissions yet for this exam.</div>';
   if (!n) return;
-  const sheet = rows.map(r => ({ Position: r.pos, Username: safeCell(r.profiles?.username), Name: safeCell(r.profiles?.full_name), Class: ex.class_level, Subject: ex.subject, Term: ex.term, Score: r.score, Total: r.total, Percent: r.pct, Grade: grade(r.pct), Result: r.pass ? 'Pass' : 'Fail', 'Tab exits': r.tab_switches || 0 }));
+  const sheet = rows.map(r => ({ Position: r.pos, Username: safeCell(r.profiles?.username), Name: safeCell(r.profiles?.full_name), Class: ex.class_level, Section: safeCell(r.profiles?.section || ''), Subject: ex.subject, Term: ex.term, Score: r.score, Total: r.total, Percent: r.pct, Grade: grade(r.pct), Result: r.pass ? 'Pass' : 'Fail', 'Tab exits': r.tab_switches || 0 }));
   $('#rX').onclick = () => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet), 'Results'); XLSX.writeFile(wb, `${ex.title}-results.xlsx`); };
-  $('#rP').onclick = () => printOut(`<h2>${esc(CFG.SCHOOL)}</h2><h3>${esc(ex.title)} — ${esc(ex.class_level)} ${esc(ex.subject)} ${esc(ex.term || '')}</h3><p>Class average ${avg}% · Highest ${rows[0].pct}% · Lowest ${rows[n - 1].pct}%</p><table><tr><th>Pos</th><th>Name</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}</td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td>${r.pass ? 'Pass' : 'Fail'}</td></tr>`).join('')}</table>`);
-  $('#rS').onclick = () => printOut(rows.map(r => `<div class="slip"><h2 style="text-align:center">${esc(CFG.SCHOOL)}</h2><h3 style="text-align:center">Result slip</h3><p><b>Student:</b> ${esc(r.profiles?.full_name)} (${esc(r.profiles?.username)})<br><b>Class:</b> ${esc(ex.class_level)}<br><b>Exam:</b> ${esc(ex.title)} — ${esc(ex.subject)} ${esc(ex.term || '')}<br><b>Score:</b> ${r.score}/${r.total} (${r.pct}%)<br><b>Grade:</b> ${grade(r.pct)} · <b>Position:</b> ${r.pos} of ${n} · <b>Remark:</b> ${r.pass ? 'Pass' : 'Fail'}</p><p style="margin-top:30px">Teacher's signature: ____________________</p></div>`).join(''));
+  $('#rP').onclick = () => printOut(`<h2>${esc(CFG.SCHOOL)}</h2><h3>${esc(ex.title)} — ${esc(ex.class_level)} ${esc(ex.subject)} ${esc(ex.term || '')}</h3><p>Class average ${avg}% · Highest ${rows[0].pct}% · Lowest ${rows[n - 1].pct}%</p><table><tr><th>Pos</th><th>Name</th><th>Section</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}</td><td>${esc(r.profiles?.section || '')}</td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td>${r.pass ? 'Pass' : 'Fail'}</td></tr>`).join('')}</table>`);
+  $('#rS').onclick = () => printOut(rows.map(r => `<div class="slip"><h2 style="text-align:center">${esc(CFG.SCHOOL)}</h2><h3 style="text-align:center">Result slip</h3><p><b>Student:</b> ${esc(r.profiles?.full_name)} (${esc(r.profiles?.username)})<br><b>Class:</b> ${esc(classLabel({ class_level: ex.class_level, section: r.profiles?.section }))}<br><b>Exam:</b> ${esc(ex.title)} — ${esc(ex.subject)} ${esc(ex.term || '')}<br><b>Score:</b> ${r.score}/${r.total} (${r.pct}%)<br><b>Grade:</b> ${grade(r.pct)} · <b>Position:</b> ${r.pos} of ${n} · <b>Remark:</b> ${r.pass ? 'Pass' : 'Fail'}</p><p style="margin-top:30px">Teacher's signature: ____________________</p></div>`).join(''));
   // question analysis
   const ids = [...new Set(rows.flatMap(r => r.question_order))];
   const { data: qs } = await sb.from('questions').select('id,question,correct,topic').in('id', ids);
@@ -370,10 +383,10 @@ async function showResults(ex) {
 }
 function printOut(html) { $('#slips').innerHTML = html; document.body.classList.add('ps'); window.onafterprint = () => document.body.classList.remove('ps'); print(); }
 async function exportAll() {
-  const { data, error } = await sb.from('attempts').select('score,total,tab_switches,exams(title,class_level,subject,term,pass_mark),profiles(full_name,username)').not('submitted_at', 'is', null);
+  const { data, error } = await sb.from('attempts').select('score,total,tab_switches,exams(title,class_level,subject,term,pass_mark),profiles(full_name,username,section)').not('submitted_at', 'is', null);
   if (error) return toast(friendly(error.message), true); if (!data.length) return toast('No results yet.', true);
-  const sh = data.map(a => { const p = a.total ? +(a.score / a.total * 100).toFixed(1) : 0; return { Class: a.exams.class_level, Subject: a.exams.subject, Term: a.exams.term, Exam: a.exams.title, Username: safeCell(a.profiles.username), Name: safeCell(a.profiles.full_name), Score: a.score, Total: a.total, Percent: p, Grade: grade(p), Result: p >= a.exams.pass_mark ? 'Pass' : 'Fail' }; })
-    .sort((a, b) => a.Class.localeCompare(b.Class) || a.Subject.localeCompare(b.Subject) || b.Percent - a.Percent);
+  const sh = data.map(a => { const p = a.total ? +(a.score / a.total * 100).toFixed(1) : 0; return { Class: a.exams.class_level, Section: safeCell(a.profiles.section || ''), Subject: a.exams.subject, Term: a.exams.term, Exam: a.exams.title, Username: safeCell(a.profiles.username), Name: safeCell(a.profiles.full_name), Score: a.score, Total: a.total, Percent: p, Grade: grade(p), Result: p >= a.exams.pass_mark ? 'Pass' : 'Fail' }; })
+    .sort((a, b) => a.Class.localeCompare(b.Class) || a.Section.localeCompare(b.Section) || a.Subject.localeCompare(b.Subject) || b.Percent - a.Percent);
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh), 'All results'); XLSX.writeFile(wb, 'all-results.xlsx');
 }
 boot();

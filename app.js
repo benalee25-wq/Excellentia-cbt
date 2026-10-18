@@ -12,7 +12,7 @@ $('#bLogin').onclick = e => run(e.target, async () => {
   if (error) { $('#lerr').textContent = 'Wrong username or password. Check and try again.'; $('#p').value = ''; $('#p').focus(); return; }
   await boot(true);
 });
-$('#p').onkeydown = e => e.key === 'Enter' && $('#bLogin').click();
+$('#p').addEventListener('keydown', e => { if (e.key === 'Enter') $('#bLogin').click(); });   // no return value, so Backspace and other keys are never blocked
 $('#bForgot').onclick = () => { $('#fp').classList.toggle('hide'); $('#fu').value = $('#u').value; };
 $('#bReq').onclick = e => run(e.target, async () => {
   const u = $('#fu').value.trim(); if (!u) return toast('Type your username first.', true);

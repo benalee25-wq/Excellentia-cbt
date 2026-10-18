@@ -13,7 +13,7 @@ $('#bLogin').onclick = e => run(e.target, async () => {
   if (error) { $('#lerr').textContent = 'Wrong username or password.'; $('#p').value = ''; $('#p').focus(); return; }
   boot();
 });
-$('#p').onkeydown = e => e.key === 'Enter' && $('#bLogin').click();
+$('#p').addEventListener('keydown', e => { if (e.key === 'Enter') $('#bLogin').click(); });   // no return value, so Backspace and other keys are never blocked
 $('#bOut').onclick = async () => { await sb.auth.signOut(); hist.length = 0; show('vLogin'); };
 async function boot() {
   const { data: { session } } = await sb.auth.getSession();

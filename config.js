@@ -87,3 +87,8 @@ const safeCell = v => (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) ? "'" + 
 
 // "JSS 1A Diamond" when a section is known, otherwise "JSS1"
 const classLabel = p => (p && p.section) ? ((p.class_level || '').replace(/\d+$/, '') + ' ' + p.section).trim() : ((p && p.class_level) || '');
+
+// Password box helpers: delete the last character, or clear the whole box
+(() => { const p = $('#p'), b = $('#pwBack'), c = $('#pwClear'); if (!p) return;
+  if (b) b.onclick = () => { p.value = p.value.slice(0, -1); p.focus(); };
+  if (c) c.onclick = () => { p.value = ''; p.focus(); }; })();

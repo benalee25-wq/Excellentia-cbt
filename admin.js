@@ -299,7 +299,8 @@ async function loadSections() {
 }
 async function listStudents() {
   let q = sb.from('profiles').select('username,full_name,class_level,section').eq('role', 'student').order('class_level').order('section').order('full_name').limit(1000); if ($('#sc').value) q = q.eq('class_level', $('#sc').value); if ($('#ss').value) q = q.eq('section', $('#ss').value);
-  const { data } = await q; $('#sList').innerHTML = `<p class="mute">${(data || []).length} student(s)</p><table><tr><th>Username</th><th>Name</th><th>Class</th><th></th></tr>${(data || []).map(s => `<tr><td>${esc(s.username)}</td><td>${esc(s.full_name)}</td><td>${esc(classLabel(s))}</td><td><button class="alt sm" data-rs="${esc(s.username)}">Reset password</button> <button class="bad sm" data-del="${esc(s.username)}">Delete</button></td></tr>`).join('')}</table>`;
+  const { data } = await q; $('#sList').innerHTML = `<p class="mute">${(data || []).length} student(s)</p><table><tr><th>Username</th><th>Name</th><th>Class</th><th></th></tr>${(data || []).map(s => `<tr><td>${esc(s.username)}</td><td>${esc(s.full_name)}</td><td>${esc(classLabel(s))}</td><td><button class="alt sm" data-ed="${esc(s.username)}">Edit</button> <button class="alt sm" data-rs="${esc(s.username)}">Reset password</button> <button class="bad sm" data-del="${esc(s.username)}">Delete</button></td></tr>`).join('')}</table>`;
+  $$('[data-ed]').forEach(b => b.onclick = () => editStudent(data.find(x => x.username === b.dataset.ed)));
   $$('[data-rs]').forEach(b => b.onclick = () => resetPw(b.dataset.rs));
   $$('[data-del]').forEach(b => b.onclick = () => delStudent(b.dataset.del));
 }
@@ -329,6 +330,21 @@ async function bulkReset() {
     });
     printOut(html);
   };
+}
+function editStudent(s) {
+  if (!s) return;
+  const m = modal(`<h2>Edit student</h2><p class="mute">Username: <b>${esc(s.username)}</b> (the username and password are not changed here)</p>
+  <label>Full name (check the spelling)</label><input id="sedn" value="${esc(s.full_name)}" maxlength="80">
+  <div class="row"><div><label>Class</label><select id="sedc">${opts(CLASSES, s.class_level)}</select></div><div><label>Section (optional)</label><input id="seds" value="${esc(s.section || '')}" maxlength="40" placeholder="e.g. 1A Diamond"></div></div>
+  <div class="row" style="margin-top:12px"><button id="sedv">Save changes</button><button class="alt" id="sedx">Cancel</button></div>`);
+  $('#sedx', m).onclick = () => m.remove();
+  $('#sedv', m).onclick = e => run(e.target, async () => {
+    const name = $('#sedn', m).value.trim().replace(/\s+/g, ' ');
+    if (name.length < 2) return toast("Type the student's full name.", true);
+    const { error } = await sb.rpc('admin_edit_student', { uname: s.username, new_name: name, new_class: $('#sedc', m).value, new_section: $('#seds', m).value.trim() });
+    if (error) return toast(friendly(error.message), true);
+    m.remove(); toast('Student updated'); listStudents(); loadSections();
+  });
 }
 async function delStudent(u) {
   if (!confirm(`Delete ${u}?\nTheir account and ALL their exam results will be removed. This cannot be undone.\nExport the results to Excel first if you need them.`)) return;

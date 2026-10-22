@@ -64,7 +64,7 @@ async function loadBank() {
   $$('[data-e]').forEach(b => b.onclick = () => qForm(data.find(x => x.id === b.dataset.e)));
   $$('[data-d]').forEach(b => b.onclick = async () => { if (!confirm('Delete this question?')) return; const { error } = await sb.from('questions').delete().eq('id', b.dataset.d); error ? toast(friendly(error.message), true) : (toast('Deleted'), loadBank()); });
 }
-function modal(html) { const m = document.createElement('div'); m.className = 'modal'; m.innerHTML = '<div>' + html + '</div>'; m.onclick = e => e.target === m && m.remove(); document.body.append(m); return m; }
+function modal(html) { const m = document.createElement('div'); m.className = 'modal'; m.innerHTML = '<div>' + html + '</div>'; let down = null; m.onpointerdown = e => { down = e.target; }; m.onclick = e => { if (e.target === m && down === m) m.remove(); }; document.body.append(m); return m; }
 function qForm(x = {}) {
   const m = modal(`<h2>${x.id ? 'Edit' : 'Add'} question</h2>
   <div class="row"><div><label>Class</label><select id="qc">${opts(CLASSES, x.class_level)}</select></div><div><label>Subject</label><input id="qs" value="${esc(x.subject)}"></div></div>
@@ -201,13 +201,40 @@ async function exams() {
   $$('[data-e]').forEach(b => b.onclick = () => eForm(data.find(x => x.id === b.dataset.e)));
   $$('[data-d]').forEach(b => b.onclick = () => confirm('Delete this exam and ALL its student results?') && sb.from('exams').delete().eq('id', b.dataset.d).then(({ error }) => error ? toast(friendly(error.message), true) : exams()));
 }
+
+// ---- Date and time pickers made of simple drop-down lists (they work on every phone) ----
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const PH = { d: 'Day', m: 'Month', y: 'Year', h: 'Hour', n: 'Min', a: 'AM/PM' };
+const rng = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+function dtField(id, label, iso) {
+  const d = iso ? new Date(iso) : null, y0 = new Date().getFullYear(), pad = n => String(n).padStart(2, '0');
+  const sel = (s, list, cur) => `<select id="${id}${s}" style="min-width:0"><option value="">${PH[s]}</option>${list.map(([v, t]) => `<option value="${v}" ${cur !== '' && String(cur) === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+  return `<label>${label}</label><div class="row" style="gap:6px">${sel('d', rng(1, 31).map(v => [v, v]), d ? d.getDate() : '')}${sel('m', MONTHS.map((t, i) => [i + 1, t]), d ? d.getMonth() + 1 : '')}${sel('y', [y0, y0 + 1].map(v => [v, v]), d ? d.getFullYear() : '')}</div>
+  <div class="row" style="gap:6px;margin-top:6px">${sel('h', rng(1, 12).map(v => [v, v]), d ? d.getHours() % 12 || 12 : '')}${sel('n', rng(0, 59).map(v => [v, pad(v)]), d ? d.getMinutes() : '')}${sel('a', [['AM', 'AM'], ['PM', 'PM']], d ? (d.getHours() >= 12 ? 'PM' : 'AM') : '')}</div>`;
+}
+function readDt(id, m, name) {
+  const g = s => $('#' + id + s, m).value;
+  if (!['d', 'm', 'y', 'h', 'n', 'a'].some(s => g(s))) return { iso: null };
+  if (!g('d') || !g('m') || !g('y') || !g('h') || g('n') === '' || !g('a')) return { err: `${name}: choose the day, month, year, hour, minute and AM/PM, or tap Clear.` };
+  const dt = new Date(+g('y'), +g('m') - 1, +g('d'), (+g('h') % 12) + (g('a') === 'PM' ? 12 : 0), +g('n'));
+  if (dt.getMonth() !== +g('m') - 1) return { err: `${name}: that date does not exist. Check the day and month.` };
+  return { iso: dt.toISOString(), dt };
+}
+function setDt(id, m, d) {
+  const set = (s, v) => { $('#' + id + s, m).value = v; };
+  if (!d) return ['d', 'm', 'y', 'h', 'n', 'a'].forEach(s => set(s, ''));
+  set('d', d.getDate()); set('m', d.getMonth() + 1); set('y', d.getFullYear()); set('h', d.getHours() % 12 || 12); set('n', d.getMinutes()); set('a', d.getHours() >= 12 ? 'PM' : 'AM');
+}
+const dtBtns = (id, extra) => `<div class="row" style="gap:6px;margin-top:6px">${extra}<button type="button" class="alt sm" id="${id}Clr">Clear</button></div>`;
 function eForm(x = {}) {
   const m = modal(`<h2>${x.id ? 'Edit' : 'Create'} exam</h2>
   <label>Title</label><input id="et" value="${esc(x.title)}">
   <div class="row"><div><label>Class</label><select id="ec">${opts(CLASSES, x.class_level)}</select></div><div><label>Subject (same spelling as the bank)</label><input id="es" value="${esc(x.subject)}"></div></div>
   <div class="row"><div><label>Term</label><select id="etm">${opts(['First Term', 'Second Term', 'Third Term'], x.term)}</select></div><div><label>Duration (minutes)</label><input id="ed" type="number" value="${x.duration_min || 30}"></div>
   <div><label>Pass mark (%)</label><input id="ep" type="number" value="${x.pass_mark ?? 50}"></div></div>
-  <div class="row"><div><label>Starts (optional)</label><input id="est" type="datetime-local" value="${loc(x.start_at)}"></div><div><label>Ends (optional)</label><input id="een" type="datetime-local" value="${loc(x.end_at)}"></div></div>
+  <div style="margin-top:6px">${dtField('ds', 'Starts (optional)', x.start_at)}${dtBtns('ds', '<button type="button" class="alt sm" id="dsNow">Set to now</button>')}</div>
+  <div style="margin-top:8px">${dtField('de', 'Ends (optional)', x.end_at)}${dtBtns('de', '<button type="button" class="alt sm" id="dePlus">Start + 2 hours</button>')}</div>
+  <p class="mute" style="margin:6px 0 0">Times use this phone's clock. Leave both empty for no limit.</p>
   <div class="row"><div><label>Access code (optional)</label><input id="eac" value="${esc(x.access_code)}"></div><div><label>Question source</label><select id="emode"><option value="r">Random from bank</option><option value="m" ${x.question_ids ? 'selected' : ''}>Pick manually</option></select></div></div>
   <div id="rnd" class="row"><div><label>Number of questions</label><input id="en" type="number" value="${x.num_questions || 20}"></div><div><label>Only this topic (optional)</label><input id="etp" value="${esc(x.topic_filter)}"></div></div>
   <div id="man" class="hide"><p id="mc" class="mute"></p><div id="mlist" class="scroll" style="max-height:240px"></div></div>
@@ -225,13 +252,23 @@ function eForm(x = {}) {
   }
   $('#emode', m).onchange = mode; $('#ec', m).onchange = $('#es', m).onchange = () => $('#emode', m).value === 'm' && loadPick(); mode();
   $('#ex', m).onclick = () => m.remove();
+  const roundUp = () => { const t = new Date(); t.setSeconds(0, 0); t.setMinutes(Math.ceil((t.getMinutes() + 1) / 5) * 5); return t; };
+  $('#dsNow', m).onclick = () => setDt('ds', m, roundUp());
+  $('#dsClr', m).onclick = () => setDt('ds', m, null);
+  $('#deClr', m).onclick = () => setDt('de', m, null);
+  $('#dePlus', m).onclick = () => { const s = readDt('ds', m, 'Starts'); if (s.err || !s.dt) return toast(s.err || 'Set the start time first.', true); setDt('de', m, new Date(s.dt.getTime() + 2 * 3600 * 1000)); };
   $('#esave', m).onclick = e => run(e.target, async () => {
     const man = $('#emode', m).value === 'm';
+    const S = readDt('ds', m, 'Starts'), E = readDt('de', m, 'Ends');
+    if (S.err || E.err) return toast(S.err || E.err, true);
+    if (S.dt && E.dt && E.dt <= S.dt) return toast('The end time must be after the start time.', true);
+    if (E.dt && E.dt <= new Date() && !confirm('The end time has already passed, so students cannot start this exam. Save anyway?')) return;
     const r = { title: $('#et', m).value.trim(), class_level: $('#ec', m).value, subject: $('#es', m).value.trim(), term: $('#etm', m).value, duration_min: +$('#ed', m).value || 30, pass_mark: +$('#ep', m).value || 50,
-      start_at: $('#est', m).value ? new Date($('#est', m).value).toISOString() : null, end_at: $('#een', m).value ? new Date($('#een', m).value).toISOString() : null,
+      start_at: S.iso, end_at: E.iso,
       access_code: $('#eac', m).value.trim() || null, instructions: $('#ei', m).value.trim() || null, show_review: $('#erv', m).checked, published: $('#epb', m).checked,
       question_ids: man ? [...chosen] : null, num_questions: man ? chosen.size : (+$('#en', m).value || 20), topic_filter: man ? null : ($('#etp', m).value.trim() || null) };
     if (!r.title || !r.subject) return toast('Title and subject are required.', true);
+    if (S.dt && E.dt && E.dt - S.dt < r.duration_min * 60000 && !confirm(`The window between start and end is shorter than the ${r.duration_min}-minute duration. Save anyway?`)) return;
     if (man && !chosen.size) return toast('Pick at least one question.', true);
     if (!man) {
       let q = sb.from('questions').select('id', { count: 'exact', head: true }).eq('class_level', r.class_level).eq('subject', r.subject);

@@ -9,8 +9,15 @@ brand(); theme();
 // ---------- auth ----------
 $('#bLogin').onclick = e => run(e.target, async () => {
   const v = $('#u').value.trim().toLowerCase();
-  const { error } = await sb.auth.signInWithPassword({ email: v.includes('@') ? v : v + '@' + CFG.EMAIL_DOMAIN, password: $('#p').value });
-  if (error) { $('#lerr').textContent = 'Wrong username or password.'; $('#p').value = ''; $('#p').focus(); return; }
+  const email = v.includes('@') ? v : v + '@' + CFG.EMAIL_DOMAIN, pw = $('#p').value;
+  let { error } = await sb.auth.signInWithPassword({ email, password: pw });
+  if (error && pw !== pw.trim()) ({ error } = await sb.auth.signInWithPassword({ email, password: pw.trim() }));
+  if (error) {
+    const creds = /invalid login credentials/i.test(error.message) || error.code === 'invalid_credentials';
+    $('#lerr').textContent = creds ? 'Wrong username or password.' : `Sign-in problem: ${error.message}`;
+    if (creds) { $('#p').value = ''; $('#p').focus(); }
+    return;
+  }
   boot();
 });
 $('#p').addEventListener('keydown', e => { if (e.key === 'Enter') $('#bLogin').click(); });   // no return value, so Backspace and other keys are never blocked

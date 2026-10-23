@@ -79,7 +79,7 @@ function genPw(n = 8) {
 // Show our own clear messages, but hide raw database/internal error text from users
 function friendly(m) {
   m = String(m || '');
-  if (/^(Exam |This exam|You have already|Wrong access|No questions|Too many|Not allowed|Password must|User not found|Student not found|You cannot reset|Registration is closed|Review is not|Attempt not|Not available|Too much|The network|Timed out|Invalid login|Password should|New password|User already|Request rate|.*rate limit|Name is too short|Invalid class|You signed in)/i.test(m)) return m;
+  if (/^(Exam |This exam|You have already|Wrong access|No questions|Too many|Not allowed|Password must|User not found|Student not found|You cannot reset|Registration is closed|Review is not|Attempt not|Not available|Too much|The network|Timed out|Invalid login|Password should|New password|User already|Request rate|.*rate limit|Name is too short|Invalid class|Username must|That username|You signed in)/i.test(m)) return m;
   console.error(m); return 'Something went wrong. Please try again, or tell your teacher.';
 }
 // Stop spreadsheet formula injection: text that starts with = + - @ is shown as text

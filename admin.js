@@ -333,17 +333,21 @@ async function bulkReset() {
 }
 function editStudent(s) {
   if (!s) return;
-  const m = modal(`<h2>Edit student</h2><p class="mute">Username: <b>${esc(s.username)}</b> (the username and password are not changed here)</p>
-  <label>Full name (check the spelling)</label><input id="sedn" value="${esc(s.full_name)}" maxlength="80">
+  const m = modal(`<h2>Edit student</h2><label>Full name (check the spelling)</label><input id="sedn" value="${esc(s.full_name)}" maxlength="80">
   <div class="row"><div><label>Class</label><select id="sedc">${opts(CLASSES, s.class_level)}</select></div><div><label>Section (optional)</label><input id="seds" value="${esc(s.section || '')}" maxlength="40" placeholder="e.g. 1A Diamond"></div></div>
+  <label>Username (what the student types to sign in)</label><input id="sedu" value="${esc(s.username)}" maxlength="30" autocapitalize="none" autocomplete="off">
+  <p class="mute" style="margin:4px 0 0">If you change the username, tell the student the new one. The password stays the same. Small letters, numbers, dots, dashes and underscores only.</p>
   <div class="row" style="margin-top:12px"><button id="sedv">Save changes</button><button class="alt" id="sedx">Cancel</button></div>`);
   $('#sedx', m).onclick = () => m.remove();
   $('#sedv', m).onclick = e => run(e.target, async () => {
     const name = $('#sedn', m).value.trim().replace(/\s+/g, ' ');
     if (name.length < 2) return toast("Type the student's full name.", true);
-    const { error } = await sb.rpc('admin_edit_student', { uname: s.username, new_name: name, new_class: $('#sedc', m).value, new_section: $('#seds', m).value.trim() });
+    const nu = $('#sedu', m).value.trim().toLowerCase();
+    if (!/^[a-z0-9._-]{3,30}$/.test(nu)) return toast('Username: 3 to 30 small letters, numbers, dots, dashes or underscores, no spaces.', true);
+    if (nu !== s.username && !confirm(`Change the username from ${s.username} to ${nu}?\nThe student must sign in with the new username from now on. The password stays the same.`)) return;
+    const { error } = await sb.rpc('admin_edit_student', { uname: s.username, new_name: name, new_class: $('#sedc', m).value, new_section: $('#seds', m).value.trim(), new_username: nu });
     if (error) return toast(friendly(error.message), true);
-    m.remove(); toast('Student updated'); listStudents(); loadSections();
+    m.remove(); toast(nu !== s.username ? `Updated. New username: ${nu}` : 'Student updated'); listStudents(); loadSections();
   });
 }
 async function delStudent(u) {

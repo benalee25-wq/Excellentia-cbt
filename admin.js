@@ -326,14 +326,17 @@ async function bulkReset() {
   }
   $('#bulkOut').innerHTML = `<p><b>${out.length}</b> new login(s) ready.</p>${out.length ? '<div class="row"><button class="gold" id="bDl">Download login sheet (CSV)</button><button class="alt" id="bPr">Print login slips</button></div><p class="mute">Passwords are shown only now. Give each student only their own details, then delete the file or slips.</p>' : ''}${bad.length ? `<p class="err">${bad.length} problem(s):</p><ul>${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}`;
   if (!out.length) return;
-  const site = location.origin + location.pathname.replace(/admin\.html$/, '');
-  $('#bDl').onclick = () => dl('student-logins.csv', ['Username,Full Name,Password,Class,Section', ...out.map(r => r.map(csvCell).join(','))].join('\n'));
+  const site = location.origin + location.pathname.replace(/admin\.html$/, '').replace(/\/admin\/?$/, '/');
+  const now = new Date(), pad = x => String(x).padStart(2, '0');
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+  const when = now.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  $('#bDl').onclick = () => dl(`student-logins-${stamp}.csv`, ['Username,Full Name,Password,Class,Section', ...out.map(r => r.map(csvCell).join(','))].join('\n'));
   $('#bPr').onclick = () => {
-    let html = `<h3>${esc(CFG.SCHOOL)}: student logins</h3>`, lastSec = null;
+    let html = `<h3>${esc(CFG.SCHOOL)}: student logins (issued ${esc(when)})</h3>`, lastSec = null;
     out.forEach(r => {
       const lab = classLabel({ class_level: r[3], section: r[4] });
       if (r[4] !== lastSec) { html += `<h3 style="margin:12px 0 6px;${lastSec !== null ? 'break-before:page;' : ''}">${esc(lab)}</h3>`; lastSec = r[4]; }
-      html += `<div class="lslip"><b>${esc(CFG.SCHOOL)}</b><br><b>Name:</b> ${esc(r[1])}<br><b>Class:</b> ${esc(lab)}<br><b>Username:</b> ${esc(r[0])}<br><b>Password:</b> ${esc(r[2])}<br><b>Sign in at:</b> ${esc(site)}</div>`;
+      html += `<div class="lslip"><b>${esc(CFG.SCHOOL)}</b><br><b>Name:</b> ${esc(r[1])}<br><b>Class:</b> ${esc(lab)}<br><b>Username:</b> ${esc(r[0])}<br><b>Password:</b> ${esc(r[2])}<br><b>Sign in at:</b> ${esc(site)}<br><b>Issued:</b> ${esc(when)}</div>`;
     });
     printOut(html);
   };

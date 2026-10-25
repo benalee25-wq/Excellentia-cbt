@@ -45,20 +45,21 @@ async function dash() {
   await sb.rpc('finalize_mine');   // an exam whose time ran out is marked now, with the answers already saved
   $('#main').innerHTML = '<p class="mute">Loading exams…</p>';
   const { data, error } = await sb.rpc('list_exams');
-  if (error) return $('#main').innerHTML = `<p class="err">${esc(error.message)}</p>`;
+  if (error) return $('#main').innerHTML = `<p class="err">${esc(friendly(error.message))}</p>`;
   const now = Date.now(), fm = d => d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
   const done = data.filter(x => x.submitted_at);
   const open = data.filter(x => !x.submitted_at && (!x.start_at || new Date(x.start_at) <= now) && (!x.end_at || new Date(x.end_at) >= now));
   const soon = data.filter(x => !x.submitted_at && x.start_at && new Date(x.start_at) > now);
   const missed = data.filter(x => !x.submitted_at && x.end_at && new Date(x.end_at) < now);
   const card = (x, body) => `<div class="card"><h3>${esc(x.title)}</h3><p class="mute">${esc(x.subject)}${x.term ? ' · ' + esc(x.term) : ''} · ${x.duration_min} min · ${x.num_questions} questions</p>${body}</div>`;
-  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
+  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bMat">📚 Study materials</button> <button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
   h += open.map(x => card(x, `${x.attempt_id ? '<span class="badge gold">In progress</span> ' : ''}${x.end_at ? `<p class="mute">Closes ${fm(x.end_at)}</p>` : ''}<button data-go="${x.id}" data-code="${x.has_code}">${x.attempt_id ? 'Resume exam' : 'Start exam'}</button>`)).join('') || '<p class="mute">No exam is open right now.</p>';
   if (soon.length) h += `<h2>Upcoming</h2>` + soon.map(x => card(x, `<p>Opens ${fm(x.start_at)}</p>`)).join('');
   if (done.length) h += `<h2>Completed</h2>` + done.map(x => { const pc = x.total ? Math.round(x.score / x.total * 100) : 0; return card(x, `<p><b>${x.score}/${x.total}</b> (${pc}%) <span class="badge ${pc >= x.pass_mark ? 'ok' : 'bad'}">${pc >= x.pass_mark ? 'Passed' : 'Not passed'}</span></p>${x.show_review ? `<button class="alt sm" data-rev="${x.attempt_id}">Review answers</button>` : ''}`); }).join('');
   if (missed.length) h += `<h2>Missed</h2>` + missed.map(x => card(x, `<p class="mute">Closed ${fm(x.end_at)}</p>`)).join('');
   $('#main').innerHTML = h;
   $('#bPw').onclick = changePw;
+  $('#bMat').onclick = mats;
   $$('[data-go]').forEach(b => b.onclick = () => begin(b, b.dataset.go, b.dataset.code === 'true' && !data.find(x => x.id === b.dataset.go).attempt_id));
   $$('[data-rev]').forEach(b => b.onclick = () => review(b.dataset.rev));
 }
@@ -71,12 +72,13 @@ function changePw() {
   <div class="row" style="margin-top:12px"><button id="npok">Save</button><button class="alt" id="npx">Cancel</button></div></div>`;
   document.body.append(m); $('#npx').onclick = () => m.remove();
   $('#npok').onclick = e => run(e.target, async () => {
-    const n = $('#np1').value; if (n.length < 8) return toast('Use at least 8 characters.', true);
+    const n = $('#np1').value, wk = weakPw(n); if (wk) return toast(wk, true);
     if (n !== $('#np2').value) return toast('The two new passwords do not match.', true);
     const { data: { user } } = await sb.auth.getUser();
     const { error: e0 } = await sb.auth.signInWithPassword({ email: user.email, password: $('#np0').value });
     if (e0) return toast('Your current password is not correct.', true);
-    const { error } = await sb.auth.updateUser({ password: n, current_password: $('#np0').value });   // works whether or not Supabase requires the current password if (error) return toast(friendly(error.message), true);
+    const { error } = await sb.auth.updateUser({ password: n, current_password: $('#np0').value });   // works whether or not Supabase requires the current password
+    if (error) return toast(friendly(error.message), true);
     m.remove(); toast('Password changed.');
   });
 }
@@ -182,7 +184,7 @@ async function submit(auto) {
     await wait(1500 * (i + 1));
   }
   if (/SESSION_REPLACED/.test(msg)) { clearInterval(tick); ex = null; return $('#main').innerHTML = `<div class="card"><h2>Sign in again to submit</h2><p>This phone was signed out because the same login was used on another device. Your answers are saved.</p><p>Tap the button, sign in, then tap <b>Resume exam</b> and <b>Submit exam</b>.</p><button id="bRe" style="width:100%">Sign in again</button></div>`, $('#bRe').onclick = () => { localStorage.removeItem(TOK_KEY); sb.auth.signOut().then(() => show('vLogin')); }; }
-  $('#main').innerHTML = `<div class="card"><h2>Could not submit yet</h2><p class="err">${esc(msg)}</p><p>Your answers are saved on this phone. Check your internet, then tap Try again.</p><button id="bRetry" style="width:100%">Try again</button></div>`;
+  $('#main').innerHTML = `<div class="card"><h2>Could not submit yet</h2><p class="err">${esc(friendly(msg))}</p><p>Your answers are saved on this phone. Check your internet, then tap Try again.</p><button id="bRetry" style="width:100%">Try again</button></div>`;
   $('#bRetry').onclick = () => { ex.submitting = false; submit(auto); };
 }
 function showScore(data, auto, aid) {
@@ -209,3 +211,27 @@ addEventListener('online', () => ex && sync());
 document.addEventListener('contextmenu', e => ex && e.preventDefault());
 
 boot(false);
+
+// ---------- study materials ----------
+async function mats() {
+  $('#main').innerHTML = '<p class="mute">Loading study materials…</p>';
+  const { data, error } = await sb.from('materials').select('*').order('created_at', { ascending: false }).limit(500);
+  if (error) { $('#main').innerHTML = `<p class="err">${esc(friendly(error.message))}</p><button class="alt" id="mBack">Back</button>`; $('#mBack').onclick = dash; return; }
+  const subs = [...new Set(data.map(x => x.subject))].sort();
+  $('#main').innerHTML = `<p style="margin:0"><button class="alt sm" id="mBack">← Back to exams</button></p><h2>Study materials</h2>
+    <div class="row"><div><input id="msr" placeholder="Search title or topic" aria-label="Search"></div>
+    <div><select id="msf" aria-label="Subject"><option value="">All subjects</option>${subs.map(v => `<option>${esc(v)}</option>`).join('')}</select></div></div><div id="mlist" style="margin-top:12px"></div>`;
+  $('#mBack').onclick = dash;
+  const draw = () => {
+    const q = $('#msr').value.trim().toLowerCase(), sf = $('#msf').value;
+    const rows = data.filter(x => (!sf || x.subject === sf) && (!q || `${x.title} ${x.topic || ''} ${x.description || ''}`.toLowerCase().includes(q)));
+    const by = {}; rows.forEach(x => (by[x.subject] = by[x.subject] || []).push(x));
+    $('#mlist').innerHTML = Object.keys(by).sort().map(sj => `<h3>${esc(sj)}</h3>` + by[sj].map(x => `<div class="card">
+      <p style="margin:0 0 4px"><span class="badge gold">${MK[x.kind][0]} ${MK[x.kind][1]}</span> ${x.topic ? `<span class="badge">${esc(x.topic)}</span> ` : ''}<span class="mute">${fsize(x.file_size)}</span></p>
+      <h3 style="margin:.3em 0">${esc(x.title)}</h3>${x.description ? `<p class="mute" style="margin:0 0 8px">${esc(x.description)}</p>` : ''}
+      <button data-o="${x.id}">${x.kind === 'video' ? 'Watch' : x.kind === 'link' ? 'Open link' : 'Open'}</button></div>`).join('')).join('')
+      || `<p class="mute">${data.length ? 'Nothing matches your search.' : 'No study materials have been posted for your class yet.'}</p>`;
+    $$('[data-o]', $('#mlist')).forEach(b => b.onclick = () => run(b, () => openMaterial(data.find(x => x.id === b.dataset.o))));
+  };
+  $('#msr').oninput = draw; $('#msf').onchange = draw; draw();
+}

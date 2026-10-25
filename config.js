@@ -73,12 +73,23 @@ function parseCSV(text) {            // small RFC4180 parser
 // Random password without look-alike characters (0/O, 1/l/I)
 function genPw(n = 8) {
   const A = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return [...crypto.getRandomValues(new Uint32Array(n))].map(v => A[v % A.length]).join('');
+  let p; do { p = [...crypto.getRandomValues(new Uint32Array(n))].map(v => A[v % A.length]).join(''); } while (!/[A-Za-z]/.test(p) || !/\d/.test(p));   // always has letters and numbers
+  return p;
+}
+// Password strength rule used for teacher-set passwords and password changes. Returns a message, or '' when OK.
+const COMMON_PW = ['12345678', '123456789', '1234567890', 'password', 'password1', 'qwertyui', 'qwerty123', '11111111', 'abcd1234', 'abc12345', 'iloveyou', '00000000', '87654321', 'school123', 'student123', 'welcome1', 'excellentia1'];
+function weakPw(p) {
+  p = String(p || '');
+  if (p.length < 8) return 'Use at least 8 characters.';
+  if (!/[A-Za-z]/.test(p) || !/\d/.test(p)) return 'Use both letters and numbers.';
+  if (/^(.)\1+$/.test(p) || COMMON_PW.includes(p.toLowerCase())) return 'That password is too easy to guess. Choose another.';
+  return '';
 }
 
 // Show our own clear messages, but hide raw database/internal error text from users
 function friendly(m) {
   m = String(m || '');
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(m)) return 'Network problem. Check your internet and try again.';
   if (/^(Exam |This exam|You have already|Wrong access|No questions|Too many|Not allowed|Password must|User not found|Student not found|You cannot reset|Registration is closed|Review is not|Attempt not|Not available|Too much|The network|Timed out|Invalid login|Password should|New password|User already|Request rate|.*rate limit|Name is too short|Invalid class|Username must|That username|You signed in)/i.test(m)) return m;
   console.error(m); return 'Something went wrong. Please try again, or tell your teacher.';
 }
@@ -92,3 +103,24 @@ const classLabel = p => (p && p.section) ? ((p.class_level || '').replace(/\d+$/
 (() => { const p = $('#p'), b = $('#pwBack'), c = $('#pwClear'); if (!p) return;
   if (b) b.onclick = () => { p.value = p.value.slice(0, -1); p.focus(); };
   if (c) c.onclick = () => { p.value = ''; p.focus(); }; })();
+
+// ===== Study materials (shared by the student and admin pages) =====
+const MAX_MB = 50;   // keep equal to the bucket limit in materials.sql (Supabase free plan: 50 MB per file)
+const MK = { video: ['🎬', 'Video'], pdf: ['📄', 'PDF'], ppt: ['📊', 'Slides'], word: ['📝', 'Word'], link: ['🔗', 'Link'] };
+const fsize = n => !n ? '' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+const clsName = c => c === 'All' ? 'All classes' : c;
+async function openMaterial(m) {
+  if (m.kind === 'link') { if (/^https?:\/\//i.test(m.link_url || '')) window.open(m.link_url, '_blank', 'noopener,noreferrer'); return; }
+  const bk = sb.storage.from('study-materials'), ttl = m.kind === 'video' ? 3600 : 900;   // link lifetime in seconds
+  const [a, b] = await Promise.all([bk.createSignedUrl(m.file_path, ttl), bk.createSignedUrl(m.file_path, ttl, { download: m.file_name || true })]);
+  if (a.error || b.error) return toast('Could not open this file. Please try again.', true);
+  const d = document.createElement('div'); d.className = 'modal';
+  d.innerHTML = `<div style="max-width:760px"><h2>${esc(m.title)}</h2>` +
+    (m.kind === 'video' ? `<video class="mv" controls playsinline preload="metadata" src="${esc(a.data.signedUrl)}"></video>`
+      : `<p class="mute">${m.kind === 'pdf' ? 'Tap Open to read it in a new tab, or Download to keep a copy.' : 'Tap Download, then open the file in Word or PowerPoint on your phone or computer.'}</p>`) +
+    `<div class="row" style="margin-top:12px">${m.kind === 'pdf' ? `<a class="btn" target="_blank" rel="noopener noreferrer" href="${esc(a.data.signedUrl)}">Open</a>` : ''}` +
+    `<a class="btn ${m.kind === 'video' ? 'alt' : ''}" href="${esc(b.data.signedUrl)}">Download</a><button class="alt" id="mvx">Close</button></div></div>`;
+  document.body.append(d);
+  let down = null; d.onpointerdown = e => { down = e.target; }; d.onclick = e => { if (e.target === d && down === d) d.remove(); };
+  $('#mvx', d).onclick = () => d.remove();
+}

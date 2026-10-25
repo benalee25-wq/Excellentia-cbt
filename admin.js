@@ -36,7 +36,7 @@ function go(t, pop) {
   tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   if (!pop && hist[hist.length - 1] !== t) { hist.push(t); history[hist.length === 1 ? 'replaceState' : 'pushState']({ t }, '', '#' + t); }
   $('#bBack').classList.toggle('hide', hist.length < 2);
-  ({ bank, upload, exams, students, results })[t]();
+  ({ bank, upload, exams, students, results, materials })[t]();
 }
 $('#bBack').onclick = () => history.back();
 window.addEventListener('popstate', () => {
@@ -372,7 +372,7 @@ async function delStudent(u) {
 }
 async function resetPw(u) {
   let np = prompt(`New password for ${u}.\nLeave empty to generate a random one (recommended):`); if (np === null) return;
-  np = np.trim() || genPw(); if (np.length < 8) return toast('Use at least 8 characters.', true);
+  np = np.trim() || genPw(); const wk = weakPw(np); if (wk) return toast(wk, true);
   const { error } = await sb.rpc('admin_reset_password', { uname: u, newpass: np });
   if (error) return toast(friendly(error.message), true);
   alert(`Done. ${u} can now sign in with the password:\n\n${np}\n\nGive it to the student privately and ask them to change it (Change password button).`); loadReq();
@@ -399,17 +399,17 @@ async function regStudents(f) {
     if (ke || !key) { out.innerHTML = `<p class="err">Could not start registration: ${esc(ke ? ke.message : 'no key')}. Have you run the security SQL?</p>`; return; }
     const { data: have } = await sb.from('profiles').select('username').limit(5000);
     const exist = new Set((have || []).map(p => p.username));      // already registered: skip them
-    const sec = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+    const regClient = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
     let lock = null; try { lock = await navigator.wakeLock.request('screen'); } catch (e) { }   // keep the screen awake
     try {
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i], u0 = (r[iU] || '').trim(), u = u0.toLowerCase(), n = (r[iN] || '').trim(), p0 = iP >= 0 ? (r[iP] || '').trim() : '', cls = (r[iC] || '').toUpperCase().replace(/\s+/g, ''), pw = p0 || genPw(), sec = iS >= 0 ? (r[iS] || '').trim().slice(0, 40) : '';
-        if (!/^[a-z0-9._-]{3,30}$/.test(u) || !n || pw.length < 8 || !CLASSES.includes(cls)) { bad.push(`Row ${i + 2} (${u0 || 'blank'}): needs a username (3-30 letters or numbers, no spaces), a name, a class like JSS1, and a password of 8+ characters (or leave it empty)`); continue; }
+        if (!/^[a-z0-9._-]{3,30}$/.test(u) || !n || weakPw(pw) || !CLASSES.includes(cls)) { bad.push(`Row ${i + 2} (${u0 || 'blank'}): needs a username (3-30 letters or numbers, no spaces), a name, a class like JSS1, and a password of 8+ characters with letters and numbers that is not easy to guess (or leave it empty)`); continue; }
         if (exist.has(u)) { skipped++; continue; }
         let error = null;
         for (let t = 0; t < 8; t++) {
           out.innerHTML = `<p class="mute">Registering ${i + 1} of ${rows.length}: ${esc(u)} (${ok} done)</p>`;
-          ({ error } = await Promise.race([sec.auth.signUp({ email: u + '@' + CFG.EMAIL_DOMAIN, password: pw, options: { data: { full_name: n, class_level: cls, section: sec, reg_key: key } } }), wait(25000).then(() => ({ error: { message: 'Timed out. Check the Students list, and use Reset password if this student is there.' } }))]));
+          ({ error } = await Promise.race([regClient.auth.signUp({ email: u + '@' + CFG.EMAIL_DOMAIN, password: pw, options: { data: { full_name: n, class_level: cls, section: sec, reg_key: key } } }), wait(25000).then(() => ({ error: { message: 'Timed out. Check the Students list, and use Reset password if this student is there.' } }))]));
           if (!isLimit(error)) break;
           for (let s = 300; s > 0; s--) { out.innerHTML = `<p class="mute">Sign-up limit reached (${ok} done). Waiting ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}, then continuing. Keep this page open.</p>`; await wait(1000); }
         }
@@ -481,3 +481,86 @@ async function exportAll() {
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh), 'All results'); XLSX.writeFile(wb, 'all-results.xlsx');
 }
 boot();
+
+
+// ================= STUDY MATERIALS =================
+const EXT = { pdf: ['pdf', 'application/pdf'], doc: ['word', 'application/msword'], docx: ['word', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  ppt: ['ppt', 'application/vnd.ms-powerpoint'], pptx: ['ppt', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  mp4: ['video', 'video/mp4'], webm: ['video', 'video/webm'], mov: ['video', 'video/quicktime'] };
+const SM = () => sb.storage.from('study-materials');
+async function materials() {
+  $('#main').innerHTML = `<div class="card"><div class="row">
+    <div><label>Class</label><select id="mtC"><option value="">Any</option>${['All', ...CLASSES].map(c => `<option value="${c}">${clsName(c)}</option>`).join('')}</select></div>
+    <div><label>Subject</label><input id="mtS" placeholder="e.g. Mathematics"></div>
+    <div><label>Type</label><select id="mtK"><option value="">Any</option>${Object.entries(MK).map(([k, v]) => `<option value="${k}">${v[1]}</option>`).join('')}</select></div></div>
+    <div class="row" style="margin-top:10px"><button id="mFind">Search</button><button class="gold" id="mAdd">+ Post material</button></div></div><div id="mtList"></div>`;
+  $('#mFind').onclick = loadMats; $('#mAdd').onclick = () => mForm();
+  loadMats();
+}
+async function loadMats() {
+  let q = sb.from('materials').select('*').order('created_at', { ascending: false }).limit(300);
+  if ($('#mtC').value) q = q.eq('class_level', $('#mtC').value);
+  if ($('#mtS').value.trim()) q = q.ilike('subject', '%' + $('#mtS').value.trim() + '%');
+  if ($('#mtK').value) q = q.eq('kind', $('#mtK').value);
+  const { data, error } = await q; if (error) return toast(friendly(error.message), true);
+  $('#mtList').innerHTML = `<p class="mute">${data.length} item(s)</p>` + (data.map(x => `<div class="card">
+    <span class="badge gold">${MK[x.kind][0]} ${MK[x.kind][1]}</span> <span class="badge">${esc(clsName(x.class_level))}</span> <span class="badge">${esc(x.subject)}</span> ${x.topic ? `<span class="badge">${esc(x.topic)}</span> ` : ''}${x.published ? '' : '<span class="badge bad">Hidden</span> '}
+    <h3 style="margin:.4em 0 .2em">${esc(x.title)}</h3>
+    <p class="mute" style="margin:0 0 8px">${x.description ? esc(x.description) + '<br>' : ''}${x.kind === 'link' ? esc(x.link_url) : esc(x.file_name || '') + ' · ' + fsize(x.file_size)} · ${new Date(x.created_at).toLocaleDateString([], { dateStyle: 'medium' })}</p>
+    <button class="alt sm" data-v="${x.id}">Preview</button> <button class="alt sm" data-e="${x.id}">Edit</button> <button class="alt sm" data-d="${x.id}">Delete</button></div>`).join('')
+    || '<div class="card">Nothing posted yet. Tap “+ Post material” to add a video, PDF, PowerPoint or Word file.</div>');
+  $$('[data-v]').forEach(b => b.onclick = () => run(b, () => openMaterial(data.find(x => x.id === b.dataset.v))));
+  $$('[data-e]').forEach(b => b.onclick = () => mForm(data.find(x => x.id === b.dataset.e)));
+  $$('[data-d]').forEach(b => b.onclick = () => run(b, async () => {
+    const x = data.find(v => v.id === b.dataset.d); if (!confirm(`Delete “${x.title}”? Students will no longer see it.`)) return;
+    const { error } = await sb.from('materials').delete().eq('id', x.id); if (error) return toast(friendly(error.message), true);
+    if (x.file_path) await SM().remove([x.file_path]);
+    toast('Deleted'); loadMats();
+  }));
+}
+async function mForm(x = {}) {
+  const { data: sj } = await sb.from('materials').select('subject').limit(1000);
+  const subs = [...new Set((sj || []).map(r => r.subject))].sort();
+  const m = modal(`<h2>${x.id ? 'Edit' : 'Post'} study material</h2>
+  <div class="row"><div><label>Class</label><select id="mfC">${['All', ...CLASSES].map(c => `<option value="${c}" ${c === (x.class_level || 'All') ? 'selected' : ''}>${clsName(c)}</option>`).join('')}</select></div>
+  <div><label>Subject</label><input id="mfS" list="mfSl" value="${esc(x.subject)}"><datalist id="mfSl">${subs.map(v => `<option value="${esc(v)}">`).join('')}</datalist></div></div>
+  <label>Topic (optional)</label><input id="mfT" value="${esc(x.topic)}">
+  <label>Title</label><input id="mfN" value="${esc(x.title)}" placeholder="e.g. Factors and multiples — lesson video">
+  <label>Short description (optional)</label><textarea id="mfD" rows="2">${esc(x.description)}</textarea>
+  <label>File: PDF, Word, PowerPoint or video (MP4/WebM/MOV), max ${MAX_MB} MB</label>
+  <input id="mfF" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.mp4,.webm,.mov">
+  <p class="mute" style="text-align:center;margin:6px 0">or</p>
+  <label>Link (YouTube, Google Drive… use this for videos over ${MAX_MB} MB)</label><input id="mfL" type="url" value="${esc(x.link_url)}" placeholder="https://…">
+  <p class="mute">${x.id ? 'Leave the file and link as they are to keep the current one. Choosing a new one replaces it.' : ''}</p>
+  <label>Visible to students?</label><select id="mfV"><option value="yes" ${x.published === false ? '' : 'selected'}>Yes, show now</option><option value="no" ${x.published === false ? 'selected' : ''}>No, keep hidden</option></select>
+  <div class="row" style="margin-top:12px"><button id="mfSave">Save</button><button class="alt" id="mfX">Cancel</button></div>`);
+  $('#mfX', m).onclick = () => m.remove();
+  $('#mfSave', m).onclick = e => run(e.target, async () => {
+    const r = { class_level: $('#mfC', m).value, subject: $('#mfS', m).value.trim(), topic: $('#mfT', m).value.trim(), title: $('#mfN', m).value.trim(),
+      description: $('#mfD', m).value.trim() || null, published: $('#mfV', m).value === 'yes' };
+    if (!r.subject || !r.title) return toast('Title and subject are required.', true);
+    const f = $('#mfF', m).files[0], link = $('#mfL', m).value.trim();
+    const linkChanged = link && link !== (x.link_url || '');
+    if (f && link && (!x.id || linkChanged)) return toast('Choose a file or a link, not both.', true);
+    if (!x.id && !f && !link) return toast('Choose a file to upload, or paste a link.', true);
+    let oldPath = null, up = null;
+    if (f) {
+      const ext = f.name.split('.').pop().toLowerCase(), t = EXT[ext];
+      if (!t) return toast('That file type is not allowed. Use PDF, Word, PowerPoint or a video (MP4, WebM, MOV).', true);
+      if (f.size > MAX_MB * 1048576) return toast(`That file is ${fsize(f.size)} and the limit is ${MAX_MB} MB. Upload big videos to YouTube or Google Drive and paste the link instead.`, true);
+      const path = crypto.randomUUID() + '.' + ext;
+      const { error } = await SM().upload(path, f, { contentType: t[1] });
+      if (error) return toast('Upload failed: ' + error.message, true);
+      up = path; oldPath = x.file_path;
+      Object.assign(r, { kind: t[0], file_path: path, file_name: f.name, file_size: f.size, link_url: null });
+    } else if (link && (!x.id || linkChanged)) {
+      if (!/^https?:\/\/\S+$/i.test(link)) return toast('The link must start with http:// or https://', true);
+      oldPath = x.file_path;
+      Object.assign(r, { kind: 'link', link_url: link, file_path: null, file_name: null, file_size: null });
+    }
+    const { error } = x.id ? await sb.from('materials').update(r).eq('id', x.id) : await sb.from('materials').insert(r);
+    if (error) { if (up) await SM().remove([up]); return toast(friendly(error.message), true); }
+    if (oldPath && oldPath !== up) await SM().remove([oldPath]);
+    m.remove(); toast('Saved'); loadMats();
+  });
+}

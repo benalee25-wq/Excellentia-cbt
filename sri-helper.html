@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SRI helper</title>
+<style>
+body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:14px;max-width:760px}
+textarea,input{width:100%;box-sizing:border-box;font:13px/1.4 ui-monospace,Menlo,monospace;padding:8px}
+button{font:inherit;padding:10px 16px;margin:8px 0}
+.err{color:#b00020}
+</style>
+</head>
+<body>
+<h2>Script integrity (SRI) helper</h2>
+<p>Open this page once (it must be served over https, for example from your GitHub Pages site, or opened on a computer). It downloads each script, works out its SHA-384 fingerprint, and gives you ready-to-paste &lt;script&gt; tags. After you paste them into <b>index.html</b> and <b>admin.html</b>, the browser refuses to run a script if the file ever changes. Delete this page afterwards.</p>
+<p>One script address per line. To use a newer version, change the version number in the address first, then test the site.</p>
+<textarea id="urls" rows="4">https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js
+https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js
+https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js</textarea>
+<button id="go">Work out the fingerprints</button>
+<p id="msg"></p>
+<textarea id="out" rows="9" readonly></textarea>
+<script>
+const $ = s => document.querySelector(s);
+$('#go').onclick = async () => {
+  const msg = $('#msg'), out = $('#out'); msg.className = ''; msg.textContent = 'Working…'; out.value = '';
+  const lines = $('#urls').value.split('\n').map(x => x.trim()).filter(Boolean), res = [];
+  for (const u of lines) {
+    try {
+      if (!/^https:\/\//.test(u)) throw new Error('must start with https://');
+      const r = await fetch(u); if (!r.ok) throw new Error('HTTP ' + r.status);
+      const h = new Uint8Array(await crypto.subtle.digest('SHA-384', await r.arrayBuffer()));
+      res.push(`<script src="${u}" integrity="sha384-${btoa(String.fromCharCode(...h))}" crossorigin="anonymous"><\/script>`);
+    } catch (e) { res.push(`<!-- FAILED ${u}: ${e.message} (the site may not allow this page to download it) -->`); }
+  }
+  out.value = res.join('\n');
+  msg.textContent = res.some(x => x.startsWith('<!--')) ? 'Some addresses failed. See the notes in the box.' : 'Done. Copy the lines below.';
+  if (res.some(x => x.startsWith('<!--'))) msg.className = 'err';
+};
+</script>
+</body>
+</html>

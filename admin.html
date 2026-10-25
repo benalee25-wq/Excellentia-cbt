@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CBT Admin</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net https://cdn.sheetjs.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tdokuihifeihuuiaabsk.supabase.co; connect-src https://tdokuihifeihuuiaabsk.supabase.co; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tdokuihifeihuuiaabsk.supabase.co; connect-src https://tdokuihifeihuuiaabsk.supabase.co; media-src https://tdokuihifeihuuiaabsk.supabase.co; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <script src="guard.js"></script>
 <link rel="stylesheet" href="style.css">
 <style>.lslip{display:inline-block;vertical-align:top;box-sizing:border-box;width:48%;margin:0 1% 10px 0;padding:10px;border:1px dashed #000;break-inside:avoid;font-size:14px}#slips{display:none}@media print{body.ps>*:not(#slips){display:none!important}body.ps #slips{display:block}}</style>
@@ -27,7 +27,7 @@
     <button class="themebtn">◐</button><button id="bOut">Sign out</button></header>
   <nav class="tabs" id="tabs">
     <button data-t="bank">Questions</button><button data-t="upload">Upload</button><button data-t="exams">Exams</button>
-    <button data-t="students">Students</button><button data-t="results">Results</button>
+    <button data-t="students">Students</button><button data-t="results">Results</button><button data-t="materials">Materials</button>
   </nav>
   <main class="wrap" id="main"></main>
 </div>

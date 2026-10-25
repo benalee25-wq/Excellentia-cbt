@@ -116,11 +116,17 @@ async function openMaterial(m) {
   if (a.error || b.error) return toast('Could not open this file. Please try again.', true);
   const d = document.createElement('div'); d.className = 'modal';
   d.innerHTML = `<div style="max-width:760px"><h2>${esc(m.title)}</h2>` +
-    (m.kind === 'video' ? `<video class="mv" controls playsinline preload="metadata" src="${esc(a.data.signedUrl)}"></video>`
+    (m.kind === 'video' ? `<video class="mv" controls playsinline preload="metadata" src="${esc(a.data.signedUrl)}"></video><p class="err" id="mvErr" style="display:none">This video can't be played in your browser. It was probably recorded in a format phones use (HEVC/H.265 or MOV). Tap Download to watch it, or ask your teacher to post it as an MP4 (H.264) file.</p>`
       : `<p class="mute">${m.kind === 'pdf' ? 'Tap Open to read it in a new tab, or Download to keep a copy.' : 'Tap Download, then open the file in Word or PowerPoint on your phone or computer.'}</p>`) +
     `<div class="row" style="margin-top:12px">${m.kind === 'pdf' ? `<a class="btn" target="_blank" rel="noopener noreferrer" href="${esc(a.data.signedUrl)}">Open</a>` : ''}` +
     `<a class="btn ${m.kind === 'video' ? 'alt' : ''}" href="${esc(b.data.signedUrl)}">Download</a><button class="alt" id="mvx">Close</button></div></div>`;
   document.body.append(d);
   let down = null; d.onpointerdown = e => { down = e.target; }; d.onclick = e => { if (e.target === d && down === d) d.remove(); };
   $('#mvx', d).onclick = () => d.remove();
+  const vid = $('video', d);
+  if (vid) {
+    const showErr = () => { $('#mvErr', d).style.display = 'block'; };
+    vid.addEventListener('error', showErr);
+    setTimeout(() => { if (vid.isConnected && vid.readyState === 0) showErr(); }, 12000);   // never started loading
+  }
 }

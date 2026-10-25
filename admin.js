@@ -362,7 +362,11 @@ function editStudent(s) {
 }
 async function delStudent(u) {
   if (!confirm(`Delete ${u}?\nTheir account and ALL their exam results will be removed. This cannot be undone.\nExport the results to Excel first if you need them.`)) return;
-  const { error } = await sb.rpc('admin_delete_student', { uname: u });
+  let { error } = await sb.rpc('admin_delete_student', { uname: u, force: false });
+  if (error && /exam results/i.test(error.message)) {
+    if (!confirm(`${u} has submitted exam results.\nDeleting this student removes those results too, so the number of students who submitted will go down.\n\nDelete anyway?`)) return;
+    ({ error } = await sb.rpc('admin_delete_student', { uname: u, force: true }));
+  }
   if (error) return toast(friendly(error.message), true);
   toast(`${u} deleted`); listStudents(); loadReq();
 }
@@ -429,6 +433,7 @@ async function results() {
   $('#rAll').onclick = e => run(e.target, exportAll);
 }
 async function showResults(ex) {
+  await sb.rpc('admin_finalize_expired', { eid: ex.id });   // mark anyone whose time is up, even if their phone never sent it
   const { data, error } = await sb.from('attempts').select('*,profiles(full_name,username,section)').eq('exam_id', ex.id).not('submitted_at', 'is', null);
   if (error) return toast(friendly(error.message), true);
   const rows = data.map(a => ({ ...a, pct: a.total ? +(a.score / a.total * 100).toFixed(1) : 0 })).sort((a, b) => b.pct - a.pct);
@@ -437,6 +442,7 @@ async function showResults(ex) {
   $('#rOut').innerHTML = n ? `<div class="card"><div class="row"><div><b>${n}</b><br><span class="mute">Submitted</span></div><div><b>${avg}%</b><br><span class="mute">Average</span></div><div><b>${rows[0].pct}%</b><br><span class="mute">Highest</span></div><div><b>${rows[n - 1].pct}%</b><br><span class="mute">Lowest</span></div><div><b>${Math.round(rows.filter(r => r.pass).length / n * 100)}%</b><br><span class="mute">Pass rate</span></div></div>
   <div class="row" style="margin-top:10px"><button id="rX">Export Excel</button><button class="alt" id="rP">Print / save as PDF</button><button class="alt" id="rS">Print result slips</button></div></div>
   <div class="card scroll"><table><tr><th>Pos</th><th>Name</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th><th>Tab exits</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}<br><span class="mute">${esc(classLabel({ class_level: ex.class_level, section: r.profiles?.section }))}</span></td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td><span class="badge ${r.pass ? 'ok' : 'bad'}">${r.pass ? 'Pass' : 'Fail'}</span></td><td>${r.tab_switches || 0}</td></tr>`).join('')}</table></div><div id="qa"></div>` : '<div class="card">No submissions yet for this exam.</div>';
+  await loadPending(ex, n);
   if (!n) return;
   const sheet = rows.map(r => ({ Position: r.pos, Username: safeCell(r.profiles?.username), Name: safeCell(r.profiles?.full_name), Class: ex.class_level, Section: safeCell(r.profiles?.section || ''), Subject: ex.subject, Term: ex.term, Score: r.score, Total: r.total, Percent: r.pct, Grade: grade(r.pct), Result: r.pass ? 'Pass' : 'Fail', 'Tab exits': r.tab_switches || 0 }));
   $('#rX').onclick = () => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet), 'Results'); XLSX.writeFile(wb, `${ex.title}-results.xlsx`); };
@@ -447,6 +453,24 @@ async function showResults(ex) {
   const { data: qs } = await sb.from('questions').select('id,question,correct,topic').in('id', ids);
   const st = (qs || []).map(q => { const wrong = rows.filter(r => r.answers[q.id] !== q.correct).length; return { q, wrong, p: Math.round(wrong / rows.filter(r => r.question_order.includes(q.id)).length * 100) }; }).sort((a, b) => b.p - a.p).slice(0, 10);
   $('#qa').innerHTML = `<div class="card scroll"><h3>Most missed questions</h3><table><tr><th>Question</th><th>Topic</th><th>Missed</th></tr>${st.map(s => `<tr><td>${fmt(s.q.question).slice(0, 120)}</td><td>${esc(s.q.topic || '-')}</td><td>${s.p}%</td></tr>`).join('')}</table></div>`;
+}
+async function loadPending(ex, done = 0) {
+  const { data } = await sb.from('attempts').select('id,ends_at,answers,question_order,profiles(full_name,username,section)').eq('exam_id', ex.id).is('submitted_at', null);
+  let box = $('#rPend'); if (!box) { box = document.createElement('div'); box.id = 'rPend'; $('#rOut').prepend(box); }
+  if (!data || !data.length) { box.innerHTML = ''; return; }
+  const late = a => Date.now() > new Date(a.ends_at).getTime();
+  box.innerHTML = `<div class="card"><h3>Started but not submitted (${data.length})</h3><p>Submitted so far: <b>${done}</b> · Started in total: <b>${done + data.length}</b></p>
+    <p class="mute">Their answers were saved as they worked. Tap to mark what was saved and add them to the results.</p>
+    ${data.map(a => `<p><b>${esc(a.profiles?.full_name)}</b> <span class="mute">${esc(a.profiles?.username)}</span><br>Answered ${Object.keys(a.answers || {}).length} of ${a.question_order.length} · ${late(a) ? 'time is up' : 'still in progress'} <button class="sm" data-fs="${a.id}">Submit now</button></p>`).join('')}
+    ${data.some(late) ? '<button class="gold" id="rFin" style="width:100%">Finish all with time up</button>' : ''}</div>`;
+  $$('[data-fs]', box).forEach(b => b.onclick = () => run(b, async () => {
+    const { error } = await sb.rpc('admin_submit_attempt', { aid: b.dataset.fs }); if (error) return toast(friendly(error.message), true);
+    toast('Submitted'); showResults(ex);
+  }));
+  if ($('#rFin', box)) $('#rFin', box).onclick = e => run(e.target, async () => {
+    const { data: n, error } = await sb.rpc('admin_finalize_expired', { eid: ex.id }); if (error) return toast(friendly(error.message), true);
+    toast(`${n} attempt(s) finished`); showResults(ex);
+  });
 }
 function printOut(html) { $('#slips').innerHTML = html; document.body.classList.add('ps'); window.onafterprint = () => document.body.classList.remove('ps'); print(); }
 async function exportAll() {

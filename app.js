@@ -26,7 +26,7 @@ $('#bReq').onclick = e => run(e.target, async () => {
   const { error } = await sb.rpc('request_reset', { uname: u }); if (error) throw error;
   $('#fmsg').textContent = 'Request sent. Tell your teacher your name so they can give you a new password.';
 });
-$('#bOut').onclick = async () => { if (ex && !confirm('Leave the exam? Your answers are saved and you can resume.')) return; clearInterval(tick); ex = null; localStorage.removeItem(TOK_KEY); await sb.auth.signOut(); show('vLogin'); };
+$('#bOut').onclick = async () => { if (ex && !(await askYes('Leave the exam?', 'Your answers are saved and you can resume.', 'Sign out', 'Stay'))) return; clearInterval(tick); ex = null; localStorage.removeItem(TOK_KEY); await sb.auth.signOut(); show('vLogin'); };
 
 async function boot(fresh) {
   const { data: { session } } = await sb.auth.getSession();
@@ -42,6 +42,7 @@ async function boot(fresh) {
 
 // ---------- dashboard ----------
 async function dash() {
+  await sb.rpc('finalize_mine');   // an exam whose time ran out is marked now, with the answers already saved
   $('#main').innerHTML = '<p class="mute">Loading exams…</p>';
   const { data, error } = await sb.rpc('list_exams');
   if (error) return $('#main').innerHTML = `<p class="err">${esc(error.message)}</p>`;
@@ -81,9 +82,30 @@ function changePw() {
 }
 
 // ---------- exam ----------
+// In-page question boxes (phone browsers can silently block the built-in confirm/prompt pop-ups)
+function askYes(title, body, yes = 'Yes', no = 'Go back') {
+  return new Promise(res => {
+    const m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = `<div><h2>${esc(title)}</h2><p style="white-space:pre-line">${esc(body)}</p><div class="row" style="margin-top:12px"><button id="aY">${esc(yes)}</button><button class="alt" id="aN">${esc(no)}</button></div></div>`;
+    document.body.append(m);
+    const done = v => { m.remove(); res(v); };
+    $('#aY', m).onclick = () => done(true); $('#aN', m).onclick = () => done(false);
+  });
+}
+function askCode() {
+  return new Promise(res => {
+    const m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = `<div><h2>Access code</h2><p class="mute">Type the access code from your teacher.</p><input id="aC" autocapitalize="none" autocomplete="off"><div class="row" style="margin-top:12px"><button id="aY">Start</button><button class="alt" id="aN">Cancel</button></div></div>`;
+    document.body.append(m); $('#aC', m).focus();
+    const done = v => { m.remove(); res(v); };
+    $('#aY', m).onclick = () => done($('#aC', m).value.trim());
+    $('#aN', m).onclick = () => done(null);
+    $('#aC', m).addEventListener('keydown', e => { if (e.key === 'Enter') $('#aY', m).click(); });
+  });
+}
 async function begin(btn, id, needCode) {
   let code = '';
-  if (needCode) { code = prompt('Enter the access code from your teacher:'); if (code === null) return; }
+  if (needCode) { code = await askCode(); if (code === null) return; }
   await run(btn, async () => {
     const { data, error } = await sb.rpc('start_exam', { eid: id, code, tok: tok() });
     if (error) return toast(friendly(error.message.replace('SESSION_REPLACED: ', '')), true);
@@ -121,9 +143,9 @@ function renderExam() {
   $('#bFlag').onclick = () => { ex.flags.has(q.id) ? ex.flags.delete(q.id) : ex.flags.add(q.id); persist(); renderExam(); };
   $('#bPrev').onclick = () => { ex.cur--; renderExam(); scrollTo(0, 0); };
   if ($('#bNext')) $('#bNext').onclick = () => { ex.cur++; renderExam(); scrollTo(0, 0); };
-  if ($('#bSub')) $('#bSub').onclick = () => {
+  if ($('#bSub')) $('#bSub').onclick = async () => {
     const un = ex.qs.length - Object.keys(ex.ans).length, fl = ex.flags.size;
-    if (confirm(`Submit now?${un ? `\n${un} question(s) unanswered.` : ''}${fl ? `\n${fl} flagged.` : ''}\nYou cannot retake this exam.`)) submit();
+    if (await askYes('Submit your exam?', `${un ? un + ' question(s) unanswered.\n' : ''}${fl ? fl + ' flagged.\n' : ''}You cannot retake this exam.`, 'Yes, submit', 'Go back')) submit();
   };
   $$('.nav button').forEach(b => b.onclick = () => { ex.cur = +b.dataset.i; renderExam(); scrollTo(0, 0); });
   tickUI();
@@ -136,7 +158,7 @@ async function sync() {
   const { error } = await sb.rpc('save_progress', { aid: ex.attempt_id, ans: ex.ans, flg: [...ex.flags], tabs: ex.tabs, tok: tok() });
   if (error) { if (/SESSION_REPLACED/.test(error.message)) kicked(); else { toast('Offline — answers saved on this phone, retrying…', true); setTimeout(sync, 5000); } }
 }
-function kicked() { clearInterval(tick); ex = null; alert('You signed in on another device, so this session has ended.'); sb.auth.signOut().then(() => show('vLogin')); }
+function kicked() { clearInterval(tick); ex = null; sb.auth.signOut().then(() => { show('vLogin'); $('#lerr').textContent = 'You signed in on another device, so this session ended. Sign in again, tap Resume exam, then submit.'; }); }
 function startTimer() { clearInterval(tick); tick = setInterval(tickUI, 1000); }
 function tickUI() {
   if (!ex) return;
@@ -159,6 +181,7 @@ async function submit(auto) {
     msg = error.message; if (/SESSION_REPLACED/.test(msg)) break;
     await wait(1500 * (i + 1));
   }
+  if (/SESSION_REPLACED/.test(msg)) { clearInterval(tick); ex = null; return $('#main').innerHTML = `<div class="card"><h2>Sign in again to submit</h2><p>This phone was signed out because the same login was used on another device. Your answers are saved.</p><p>Tap the button, sign in, then tap <b>Resume exam</b> and <b>Submit exam</b>.</p><button id="bRe" style="width:100%">Sign in again</button></div>`, $('#bRe').onclick = () => { localStorage.removeItem(TOK_KEY); sb.auth.signOut().then(() => show('vLogin')); }; }
   $('#main').innerHTML = `<div class="card"><h2>Could not submit yet</h2><p class="err">${esc(msg)}</p><p>Your answers are saved on this phone. Check your internet, then tap Try again.</p><button id="bRetry" style="width:100%">Try again</button></div>`;
   $('#bRetry').onclick = () => { ex.submitting = false; submit(auto); };
 }
@@ -179,7 +202,7 @@ async function review(aid) {
 }
 
 // ---------- integrity: log tab switches / leaving ----------
-document.addEventListener('visibilitychange', () => { if (ex && document.hidden) { ex.tabs++; sync(); } });
+document.addEventListener('visibilitychange', () => { if (ex && document.hidden) { ex.tabs++; sync(); } else if (ex && !document.hidden) tickUI(); });   // coming back to the page: check the time straight away
 addEventListener('blur', () => { if (ex && !document.hidden) { ex.tabs++; toast('Warning: leaving the exam screen is recorded.', true); } });
 addEventListener('beforeunload', e => { if (ex) { e.preventDefault(); e.returnValue = ''; } });
 addEventListener('online', () => ex && sync());

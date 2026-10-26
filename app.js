@@ -67,16 +67,16 @@ async function dash() {
 function changePw() {
   const m = document.createElement('div'); m.className = 'modal';
   m.innerHTML = `<div><h2>Change password</h2><label for="np0">Current password</label><input id="np0" type="password" autocomplete="current-password">
-  <label for="np1">New password (8 or more characters)</label><input id="np1" type="password" autocomplete="new-password">
+  <label for="np1">New password (8 or more characters, with letters and numbers)</label><input id="np1" type="password" autocomplete="new-password">
   <label for="np2">Type the new password again</label><input id="np2" type="password" autocomplete="new-password">
   <div class="row" style="margin-top:12px"><button id="npok">Save</button><button class="alt" id="npx">Cancel</button></div></div>`;
   document.body.append(m); $('#npx').onclick = () => m.remove();
   $('#npok').onclick = e => run(e.target, async () => {
     const n = $('#np1').value, wk = weakPw(n); if (wk) return toast(wk, true);
     if (n !== $('#np2').value) return toast('The two new passwords do not match.', true);
-    const { data: { user } } = await sb.auth.getUser();
-    const { error: e0 } = await sb.auth.signInWithPassword({ email: user.email, password: $('#np0').value });
-    if (e0) return toast('Your current password is not correct.', true);
+    const { data: okPw, error: e0 } = await sb.rpc('verify_my_password', { pw: $('#np0').value });   // checks without creating a new sign-in
+    if (e0) throw e0;
+    if (!okPw) return toast('Your current password is not correct.', true);
     const { error } = await sb.auth.updateUser({ password: n, current_password: $('#np0').value });   // works whether or not Supabase requires the current password
     if (error) return toast(friendly(error.message), true);
     m.remove(); toast('Password changed.');

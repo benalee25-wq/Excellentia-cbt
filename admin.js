@@ -36,7 +36,7 @@ function go(t, pop) {
   tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   if (!pop && hist[hist.length - 1] !== t) { hist.push(t); history[hist.length === 1 ? 'replaceState' : 'pushState']({ t }, '', '#' + t); }
   $('#bBack').classList.toggle('hide', hist.length < 2);
-  ({ bank, upload, exams, students, results, materials })[t]();
+  ({ bank, upload, exams, students, results, materials, activity })[t]();
 }
 $('#bBack').onclick = () => history.back();
 window.addEventListener('popstate', () => {
@@ -566,4 +566,45 @@ async function mForm(x = {}) {
     if (oldPath && oldPath !== up) await SM().remove([oldPath]);
     m.remove(); toast('Saved'); loadMats();
   });
+}
+
+
+// ================= SIGN-IN ACTIVITY =================
+const fmtWhen = iso => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+let actRows = [];
+async function activity() {
+  $('#main').innerHTML = `<div class="card"><div class="row">
+    <div><label>Who</label><select id="aW"><option value="student">Students</option><option value="admin">Teachers</option><option value="">Everyone</option></select></div>
+    <div><label>Period</label><select id="aP"><option value="0">Today</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option><option value="">All time</option></select></div>
+    <div><label>Class</label><select id="aC"><option value="">All classes</option>${CLASSES.map(c => `<option>${c}</option>`).join('')}</select></div></div>
+    <label>Search name or username</label><input id="aS" placeholder="Type to search">
+    <div class="row" style="margin-top:10px"><button id="aGo">Show</button><button class="alt" id="aX">Export Excel</button></div></div><div id="aOut"></div>`;
+  $('#aGo').onclick = e => run(e.target, loadActivity);
+  $('#aS').addEventListener('keydown', e => { if (e.key === 'Enter') $('#aGo').click(); });
+  $('#aX').onclick = () => {
+    if (!actRows.length) return toast('Nothing to export. Tap Show first.', true);
+    const when = nowStr(), sh = actRows.map(r => ({ 'Signed in': fmtWhen(r.at), Username: safeCell(r.username || ''), Name: safeCell(r.full_name || ''), Role: r.role === 'admin' ? 'Teacher' : 'Student', Class: r.class_level || '', Section: safeCell(r.section || ''), 'Date downloaded': when }));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh), 'Sign-ins'); XLSX.writeFile(wb, `sign-ins-${dayStr()}.xlsx`);
+  };
+  loadActivity();
+}
+async function loadActivity() {
+  const w = $('#aW').value, p = $('#aP').value, c = $('#aC').value, q = $('#aS').value.trim().toLowerCase(), LIM = 1000;
+  let since = null; if (p === '0') { since = new Date(); since.setHours(0, 0, 0, 0); } else if (p) since = new Date(Date.now() - p * 864e5);
+  let qy = sb.from('login_log').select('*').order('at', { ascending: false }).limit(LIM);
+  if (since) qy = qy.gte('at', since.toISOString()); if (w) qy = qy.eq('role', w); if (c) qy = qy.eq('class_level', c);
+  const { data, error } = await qy; if (error) return toast(friendly(error.message), true);
+  const hit = r => !q || `${r.full_name || ''} ${r.username || ''}`.toLowerCase().includes(q);
+  actRows = data.filter(hit);
+  const people = new Set(actRows.map(r => r.user_id)).size, capped = data.length >= LIM;
+  let html = `<div class="card"><div class="row"><div><b>${actRows.length}</b><br><span class="mute">Sign-ins</span></div><div><b>${people}</b><br><span class="mute">Different people</span></div></div>${capped ? `<p class="mute">Showing the latest ${LIM} sign-ins only. Choose a shorter period to see everything.</p>` : ''}</div>`;
+  html += actRows.length ? `<div class="card scroll"><table><tr><th>When</th><th>Name</th><th>Class</th></tr>${actRows.map(r => `<tr><td>${esc(fmtWhen(r.at))}</td><td>${esc(r.full_name)}${w === '' ? ` <span class="badge">${r.role === 'admin' ? 'Teacher' : 'Student'}</span>` : ''}<br><span class="mute">${esc(r.username)}</span></td><td>${esc(classLabel(r))}</td></tr>`).join('')}</table></div>` : '<div class="card">No sign-ins found for these choices.</div>';
+  if (w === 'student' && !capped) {
+    let pq = sb.from('profiles').select('id,full_name,username,class_level,section').eq('role', 'student').order('full_name').limit(3000);
+    if (c) pq = pq.eq('class_level', c);
+    const { data: pr } = await pq, seen = new Set(data.map(r => r.user_id));
+    const miss = (pr || []).filter(s => !seen.has(s.id) && hit(s));
+    html += `<div class="card"><h3>Did NOT sign in during this period (${miss.length})</h3>` + (miss.length ? `<div class="scroll"><table><tr><th>Name</th><th>Class</th></tr>${miss.map(s => `<tr><td>${esc(s.full_name)}<br><span class="mute">${esc(s.username)}</span></td><td>${esc(classLabel(s))}</td></tr>`).join('')}</table></div>` : '<p class="mute">Everyone signed in.</p>') + '</div>';
+  }
+  $('#aOut').innerHTML = html;
 }

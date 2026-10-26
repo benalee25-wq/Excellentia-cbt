@@ -514,12 +514,17 @@ async function loadMats() {
     || '<div class="card">Nothing posted yet. Tap “+ Post material” to add a video, PDF, PowerPoint or Word file.</div>');
   $$('[data-v]').forEach(b => b.onclick = () => run(b, () => openMaterial(data.find(x => x.id === b.dataset.v))));
   $$('[data-e]').forEach(b => b.onclick = () => mForm(data.find(x => x.id === b.dataset.e)));
-  $$('[data-d]').forEach(b => b.onclick = () => run(b, async () => {
-    const x = data.find(v => v.id === b.dataset.d); if (!confirm(`Delete “${x.title}”? Students will no longer see it.`)) return;
-    const { error } = await sb.from('materials').delete().eq('id', x.id); if (error) return toast(friendly(error.message), true);
-    if (x.file_path) await SM().remove([x.file_path]);
-    toast('Deleted'); loadMats();
-  }));
+  $$('[data-d]').forEach(b => b.onclick = async () => {
+    const x = data.find(v => v.id === b.dataset.d);
+    if (!(await askYes('Delete this study material?', `“${x.title}”\n\nStudents will no longer see it${x.file_path ? ', and the uploaded file is removed for good' : ''}. This cannot be undone.`, 'Yes, delete', 'Keep it'))) return;
+    run(b, async () => {
+      const { data: gone, error } = await sb.from('materials').delete().eq('id', x.id).select('id');
+      if (error) return toast(friendly(error.message), true);
+      if (!gone || !gone.length) return toast('Could not delete it. Refresh the page and try again.', true);
+      if (x.file_path) { const { error: e2 } = await SM().remove([x.file_path]); if (e2) toast('Deleted, but the file could not be cleared from storage.', true); else toast('Deleted'); } else toast('Deleted');
+      loadMats();
+    });
+  });
 }
 async function mForm(x = {}) {
   const { data: sj } = await sb.from('materials').select('subject').limit(1000);
@@ -607,4 +612,16 @@ async function loadActivity() {
     html += `<div class="card"><h3>Did NOT sign in during this period (${miss.length})</h3>` + (miss.length ? `<div class="scroll"><table><tr><th>Name</th><th>Class</th></tr>${miss.map(s => `<tr><td>${esc(s.full_name)}<br><span class="mute">${esc(s.username)}</span></td><td>${esc(classLabel(s))}</td></tr>`).join('')}</table></div>` : '<p class="mute">Everyone signed in.</p>') + '</div>';
   }
   $('#aOut').innerHTML = html;
+}
+
+
+// In-page yes/no box. Phone browsers can silently block the built-in confirm() pop-up, which made Delete do nothing.
+function askYes(title, body, yes = 'Yes', no = 'Cancel') {
+  return new Promise(res => {
+    const m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = `<div><h2>${esc(title)}</h2><p style="white-space:pre-line">${esc(body)}</p><div class="row" style="margin-top:12px"><button class="bad" id="aYes">${esc(yes)}</button><button class="alt" id="aNo">${esc(no)}</button></div></div>`;
+    document.body.append(m);
+    const done = v => { m.remove(); res(v); };
+    $('#aYes', m).onclick = () => done(true); $('#aNo', m).onclick = () => done(false);
+  });
 }

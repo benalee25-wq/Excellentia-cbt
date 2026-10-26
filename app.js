@@ -26,7 +26,7 @@ $('#bReq').onclick = e => run(e.target, async () => {
   const { error } = await sb.rpc('request_reset', { uname: u }); if (error) throw error;
   $('#fmsg').textContent = 'Request sent. Tell your teacher your name so they can give you a new password.';
 });
-$('#bOut').onclick = async () => { if (ex && !(await askYes('Leave the exam?', 'Your answers are saved and you can resume.', 'Sign out', 'Stay'))) return; clearInterval(tick); ex = null; localStorage.removeItem(TOK_KEY); await sb.auth.signOut(); show('vLogin'); };
+$('#bOut').onclick = async () => { if (ex && !(await askYes('Leave the exam?', 'Your answers are saved and you can resume.', 'Sign out', 'Stay'))) return; clearInterval(tick); ex = null; localStorage.removeItem(TOK_KEY); await signOutLogged(); show('vLogin'); };
 
 async function boot(fresh) {
   const { data: { session } } = await sb.auth.getSession();
@@ -37,7 +37,7 @@ async function boot(fresh) {
   me = p;
   if (fresh || !tok()) { localStorage.setItem(TOK_KEY, crypto.randomUUID()); await sb.rpc('claim_session', { tok: tok() }); }
   $('#who').textContent = `${p.full_name} · ${classLabel(p)}`;
-  show('vApp'); dash();
+  show('vApp'); dash(); startPresence();
 }
 
 // ---------- dashboard ----------
@@ -160,7 +160,7 @@ async function sync() {
   const { error } = await sb.rpc('save_progress', { aid: ex.attempt_id, ans: ex.ans, flg: [...ex.flags], tabs: ex.tabs, tok: tok() });
   if (error) { if (/SESSION_REPLACED/.test(error.message)) kicked(); else { toast('Offline — answers saved on this phone, retrying…', true); setTimeout(sync, 5000); } }
 }
-function kicked() { clearInterval(tick); ex = null; sb.auth.signOut().then(() => { show('vLogin'); $('#lerr').textContent = 'You signed in on another device, so this session ended. Sign in again, tap Resume exam, then submit.'; }); }
+function kicked() { clearInterval(tick); stopPresence(); ex = null; sb.auth.signOut().then(() => { show('vLogin'); $('#lerr').textContent = 'You signed in on another device, so this session ended. Sign in again, tap Resume exam, then submit.'; }); }
 function startTimer() { clearInterval(tick); tick = setInterval(tickUI, 1000); }
 function tickUI() {
   if (!ex) return;

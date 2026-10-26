@@ -135,3 +135,26 @@ async function openMaterial(m) {
     setTimeout(() => { if (vid.isConnected && vid.readyState === 0) showErr(); }, 12000);   // never started loading
   }
 }
+
+// ===== Who is on the platform (feeds the admin "Sign-ins" tab) =====
+let presenceT = null, presenceTok = null, presenceSub = null;
+async function pingPresence() { try { await sb.rpc('ping_presence'); } catch (e) {} }
+const presenceOnVis = () => { if (!document.hidden) pingPresence(); };
+const presenceOnHide = () => {   // a last note as the page closes, so "left at" is accurate
+  if (!presenceTok) return;
+  try { fetch(CFG.SUPABASE_URL + '/rest/v1/rpc/touch_presence', { method: 'POST', keepalive: true, headers: { apikey: CFG.SUPABASE_KEY, Authorization: 'Bearer ' + presenceTok, 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {}); } catch (e) {}
+};
+function stopPresence() {
+  clearInterval(presenceT); presenceT = null; presenceTok = null;
+  if (presenceSub) { presenceSub.unsubscribe(); presenceSub = null; }
+  document.removeEventListener('visibilitychange', presenceOnVis); removeEventListener('pagehide', presenceOnHide);
+}
+function startPresence() {
+  stopPresence();
+  sb.auth.getSession().then(({ data }) => { presenceTok = data.session?.access_token || null; });
+  presenceSub = sb.auth.onAuthStateChange((_e, s) => { presenceTok = s?.access_token || null; }).data.subscription;
+  pingPresence();
+  presenceT = setInterval(() => { if (!document.hidden) pingPresence(); }, 120000);
+  document.addEventListener('visibilitychange', presenceOnVis); addEventListener('pagehide', presenceOnHide);
+}
+async function signOutLogged() { stopPresence(); try { await sb.rpc('log_signout'); } catch (e) {} await sb.auth.signOut(); }

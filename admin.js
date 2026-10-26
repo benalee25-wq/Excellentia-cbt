@@ -445,9 +445,9 @@ async function showResults(ex) {
   await loadPending(ex, n);
   if (!n) return;
   const sheet = rows.map(r => ({ Position: r.pos, Username: safeCell(r.profiles?.username), Name: safeCell(r.profiles?.full_name), Class: ex.class_level, Section: safeCell(r.profiles?.section || ''), Subject: ex.subject, Term: ex.term, Score: r.score, Total: r.total, Percent: r.pct, Grade: grade(r.pct), Result: r.pass ? 'Pass' : 'Fail', 'Tab exits': r.tab_switches || 0 }));
-  $('#rX').onclick = () => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet), 'Results'); XLSX.writeFile(wb, `${ex.title}-results.xlsx`); };
-  $('#rP').onclick = () => printOut(`<h2>${esc(CFG.SCHOOL)}</h2><h3>${esc(ex.title)} — ${esc(ex.class_level)} ${esc(ex.subject)} ${esc(ex.term || '')}</h3><p>Class average ${avg}% · Highest ${rows[0].pct}% · Lowest ${rows[n - 1].pct}%</p><table><tr><th>Pos</th><th>Name</th><th>Section</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}</td><td>${esc(r.profiles?.section || '')}</td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td>${r.pass ? 'Pass' : 'Fail'}</td></tr>`).join('')}</table>`);
-  $('#rS').onclick = () => printOut(rows.map(r => `<div class="slip"><h2 style="text-align:center">${esc(CFG.SCHOOL)}</h2><h3 style="text-align:center">Result slip</h3><p><b>Student:</b> ${esc(r.profiles?.full_name)} (${esc(r.profiles?.username)})<br><b>Class:</b> ${esc(classLabel({ class_level: ex.class_level, section: r.profiles?.section }))}<br><b>Exam:</b> ${esc(ex.title)} — ${esc(ex.subject)} ${esc(ex.term || '')}<br><b>Score:</b> ${r.score}/${r.total} (${r.pct}%)<br><b>Grade:</b> ${grade(r.pct)} · <b>Position:</b> ${r.pos} of ${n} · <b>Remark:</b> ${r.pass ? 'Pass' : 'Fail'}</p><p style="margin-top:30px">Teacher's signature: ____________________</p></div>`).join(''));
+  $('#rX').onclick = () => { const when = nowStr(), wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet.map(r => ({ ...r, 'Date downloaded': when }))), 'Results'); XLSX.writeFile(wb, `${ex.title}-results-${dayStr()}.xlsx`); };
+  $('#rP').onclick = () => printOut(`<h2>${esc(CFG.SCHOOL)}</h2><h3>${esc(ex.title)} — ${esc(ex.class_level)} ${esc(ex.subject)} ${esc(ex.term || '')}</h3><p>Class average ${avg}% · Highest ${rows[0].pct}% · Lowest ${rows[n - 1].pct}%<br><b>Date printed:</b> ${esc(nowStr())}</p><table><tr><th>Pos</th><th>Name</th><th>Section</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}</td><td>${esc(r.profiles?.section || '')}</td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td>${r.pass ? 'Pass' : 'Fail'}</td></tr>`).join('')}</table>`);
+  $('#rS').onclick = () => { const when = nowStr(); printOut(rows.map(r => `<div class="slip"><h2 style="text-align:center">${esc(CFG.SCHOOL)}</h2><h3 style="text-align:center">Result slip</h3><p><b>Student:</b> ${esc(r.profiles?.full_name)} (${esc(r.profiles?.username)})<br><b>Class:</b> ${esc(classLabel({ class_level: ex.class_level, section: r.profiles?.section }))}<br><b>Exam:</b> ${esc(ex.title)} — ${esc(ex.subject)} ${esc(ex.term || '')}<br><b>Score:</b> ${r.score}/${r.total} (${r.pct}%)<br><b>Grade:</b> ${grade(r.pct)} · <b>Position:</b> ${r.pos} of ${n} · <b>Remark:</b> ${r.pass ? 'Pass' : 'Fail'}<br><b>Date printed:</b> ${esc(when)}</p><p style="margin-top:30px">Teacher's signature: ____________________</p></div>`).join('')); };
   // question analysis
   const ids = [...new Set(rows.flatMap(r => r.question_order))];
   const { data: qs } = await sb.from('questions').select('id,question,correct,topic').in('id', ids);
@@ -472,13 +472,16 @@ async function loadPending(ex, done = 0) {
     toast(`${n} attempt(s) finished`); showResults(ex);
   });
 }
+const nowStr = () => new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });   // e.g. 26 Oct 2026, 2:15 PM
+const dayStr = () => { const d = new Date(), p = x => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
 function printOut(html) { $('#slips').innerHTML = html; document.body.classList.add('ps'); window.onafterprint = () => document.body.classList.remove('ps'); print(); }
 async function exportAll() {
   const { data, error } = await sb.from('attempts').select('score,total,tab_switches,exams(title,class_level,subject,term,pass_mark),profiles(full_name,username,section)').not('submitted_at', 'is', null);
   if (error) return toast(friendly(error.message), true); if (!data.length) return toast('No results yet.', true);
-  const sh = data.map(a => { const p = a.total ? +(a.score / a.total * 100).toFixed(1) : 0; return { Class: a.exams.class_level, Section: safeCell(a.profiles.section || ''), Subject: a.exams.subject, Term: a.exams.term, Exam: a.exams.title, Username: safeCell(a.profiles.username), Name: safeCell(a.profiles.full_name), Score: a.score, Total: a.total, Percent: p, Grade: grade(p), Result: p >= a.exams.pass_mark ? 'Pass' : 'Fail' }; })
+  const when = nowStr();
+  const sh = data.map(a => { const p = a.total ? +(a.score / a.total * 100).toFixed(1) : 0; return { Class: a.exams.class_level, Section: safeCell(a.profiles.section || ''), Subject: a.exams.subject, Term: a.exams.term, Exam: a.exams.title, Username: safeCell(a.profiles.username), Name: safeCell(a.profiles.full_name), Score: a.score, Total: a.total, Percent: p, Grade: grade(p), Result: p >= a.exams.pass_mark ? 'Pass' : 'Fail', 'Date downloaded': when }; })
     .sort((a, b) => a.Class.localeCompare(b.Class) || a.Section.localeCompare(b.Section) || a.Subject.localeCompare(b.Subject) || b.Percent - a.Percent);
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh), 'All results'); XLSX.writeFile(wb, 'all-results.xlsx');
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh), 'All results'); XLSX.writeFile(wb, `all-results-${dayStr()}.xlsx`);
 }
 boot();
 

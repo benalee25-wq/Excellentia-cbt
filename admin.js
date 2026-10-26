@@ -577,11 +577,12 @@ async function mForm(x = {}) {
 // ================= SIGN-IN ACTIVITY =================
 const fmtWhen = iso => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 const ONLINE_MS = 5 * 60000;   // a page that has not checked in for 5 minutes is treated as left
-const durTxt = ms => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
+const durTxt = ms => { const m = Math.round(ms / 60000); return ms < 60000 ? 'Under 1 min' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
 function presInfo(r) {
-  const at = new Date(r.at).getTime(), gone = (iso, text) => ({ left: iso, text, dur: durTxt(new Date(iso).getTime() - at) });
-  if (r.left_at) return gone(r.left_at, r.left_how === 'signed out' ? 'Signed out' : 'Closed the page or went offline');
-  if (r.last_seen) return Date.now() - new Date(r.last_seen).getTime() < ONLINE_MS ? { online: true, text: 'Online now', dur: durTxt(Date.now() - at) } : gone(r.last_seen, 'Closed the page or went offline');
+  const at = new Date(r.at).getTime(), span = iso => durTxt(new Date(iso).getTime() - at);
+  if (r.left_at && r.left_how === 'signed out') return { left: r.left_at, text: 'Signed out', dur: span(r.left_at) };
+  if (r.left_at) return { left: r.left_at, text: 'Last active (did not sign out)', dur: span(r.left_at) };
+  if (r.last_seen) return Date.now() - new Date(r.last_seen).getTime() < ONLINE_MS ? { online: true, text: 'Online now', dur: durTxt(Date.now() - at) } : { left: r.last_seen, text: 'Last active (did not sign out)', dur: span(r.last_seen) };
   return { text: 'Not recorded', dur: '' };
 }
 let actRows = [];
@@ -612,7 +613,7 @@ async function loadActivity() {
   actRows = data.filter(r => hit(r) && (!$('#aO').value || presInfo(r).online));
   const people = new Set(actRows.map(r => r.user_id)).size, capped = data.length >= LIM;
   let html = `<div class="card"><div class="row"><div><b>${actRows.length}</b><br><span class="mute">Sign-ins</span></div><div><b>${people}</b><br><span class="mute">Different people</span></div><div><b>${new Set(actRows.filter(r => presInfo(r).online).map(r => r.user_id)).size}</b><br><span class="mute">Online now</span></div></div>${capped ? `<p class="mute">Showing the latest ${LIM} sign-ins only. Choose a shorter period to see everything.</p>` : ''}</div>`;
-  html += actRows.length ? `<div class="card scroll"><table><tr><th>Name</th><th>Signed in</th><th>Left</th><th>Time</th></tr>${actRows.map(r => { const pi = presInfo(r); return `<tr><td>${esc(r.full_name)}${w === '' ? ` <span class="badge">${r.role === 'admin' ? 'Teacher' : 'Student'}</span>` : ''}<br><span class="mute">${esc(r.username)} · ${esc(classLabel(r))}</span></td><td>${esc(fmtWhen(r.at))}${r.kind === 'resumed' ? '<br><span class="mute">(reopened while signed in)</span>' : ''}</td><td>${pi.online ? '<span class="badge ok">Online now</span>' : pi.left ? esc(fmtWhen(pi.left)) + '<br><span class="mute">' + esc(pi.text) + '</span>' : '<span class="mute">' + esc(pi.text) + '</span>'}</td><td>${esc(pi.dur)}</td></tr>`; }).join('')}</table></div>` : '<div class="card">No sign-ins found for these choices.</div>';
+  html += actRows.length ? `<div class="card">${actRows.map(r => { const pi = presInfo(r); return `<div style="padding:10px 0;border-bottom:1px solid var(--line)"><b>${esc(r.full_name)}</b>${w === '' ? ` <span class="badge">${r.role === 'admin' ? 'Teacher' : 'Student'}</span>` : ''} ${pi.online ? '<span class="badge ok">Online now</span>' : ''}<br><span class="mute">${esc(r.username)} · ${esc(classLabel(r))}</span><br>Signed in: ${esc(fmtWhen(r.at))}${r.kind === 'resumed' ? ' <span class="mute">(returned after a long break)</span>' : ''}<br>${pi.online ? '' : pi.left ? `Left: ${esc(fmtWhen(pi.left))}<br><span class="mute">${esc(pi.text)}</span><br>` : `<span class="mute">${esc(pi.text)}</span><br>`}Time on platform: ${esc(pi.dur)}</div>`; }).join('')}</div>` : '<div class="card">No sign-ins found for these choices.</div>';
   if (w === 'student' && !capped) {
     let pq = sb.from('profiles').select('id,full_name,username,class_level,section').eq('role', 'student').order('full_name').limit(3000);
     if (c) pq = pq.eq('class_level', c);

@@ -52,7 +52,7 @@ async function dash() {
   const soon = data.filter(x => !x.submitted_at && x.start_at && new Date(x.start_at) > now);
   const missed = data.filter(x => !x.submitted_at && x.end_at && new Date(x.end_at) < now);
   const card = (x, body) => `<div class="card"><h3>${esc(x.title)}</h3><p class="mute">${esc(x.subject)}${x.term ? ' · ' + esc(x.term) : ''} · ${x.duration_min} min · ${x.num_questions} questions</p>${body}</div>`;
-  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bMat">📚 Study materials</button> <button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
+  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bMsg">📢 Messages</button> <button class="alt sm" id="bMat">📚 Study materials</button> <button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
   h += open.map(x => card(x, `${x.attempt_id ? '<span class="badge gold">In progress</span> ' : ''}${x.end_at ? `<p class="mute">Closes ${fm(x.end_at)}</p>` : ''}<button data-go="${x.id}" data-code="${x.has_code}">${x.attempt_id ? 'Resume exam' : 'Start exam'}</button>`)).join('') || '<p class="mute">No exam is open right now.</p>';
   if (soon.length) h += `<h2>Upcoming</h2>` + soon.map(x => card(x, `<p>Opens ${fm(x.start_at)}</p>`)).join('');
   if (done.length) h += `<h2>Completed</h2>` + done.map(x => { const pc = x.total ? Math.round(x.score / x.total * 100) : 0; return card(x, `<p><b>${x.score}/${x.total}</b> (${pc}%) <span class="badge ${pc >= x.pass_mark ? 'ok' : 'bad'}">${pc >= x.pass_mark ? 'Passed' : 'Not passed'}</span></p>${x.show_review ? `<button class="alt sm" data-rev="${x.attempt_id}">Review answers</button>` : ''}`); }).join('');
@@ -60,6 +60,7 @@ async function dash() {
   $('#main').innerHTML = h;
   $('#bPw').onclick = changePw;
   $('#bMat').onclick = mats;
+  $('#bMsg').onclick = msgs; msgBadge();
   $$('[data-go]').forEach(b => b.onclick = () => begin(b, b.dataset.go, b.dataset.code === 'true' && !data.find(x => x.id === b.dataset.go).attempt_id));
   $$('[data-rev]').forEach(b => b.onclick = () => review(b.dataset.rev));
 }
@@ -234,4 +235,30 @@ async function mats() {
     $$('[data-o]', $('#mlist')).forEach(b => b.onclick = () => run(b, () => openMaterial(data.find(x => x.id === b.dataset.o))));
   };
   $('#msr').oninput = draw; $('#msf').onchange = draw; draw();
+}
+
+// ---------- messages from the teacher ----------
+async function msgUnread() {
+  const [m, r] = await Promise.all([sb.from('messages').select('id').limit(200), sb.from('message_reads').select('message_id').limit(1000)]);
+  if (m.error || r.error) return 0;
+  const seen = new Set(r.data.map(x => x.message_id)); return m.data.filter(x => !seen.has(x.id)).length;
+}
+async function msgBadge() {
+  const n = await msgUnread(), b = $('#bMsg'); if (!b) return;
+  b.innerHTML = n ? `📢 Messages <span class="badge bad">${n}</span>` : '📢 Messages';
+}
+async function msgs() {
+  $('#main').innerHTML = '<p class="mute">Loading messages…</p>';
+  const [m, r] = await Promise.all([sb.from('messages').select('*').order('created_at', { ascending: false }).limit(100), sb.from('message_reads').select('message_id').limit(1000)]);
+  if (m.error) { $('#main').innerHTML = `<p class="err">${esc(friendly(m.error.message))}</p><button class="alt" id="mBack">Back</button>`; $('#mBack').onclick = dash; return; }
+  const seen = new Set((r.data || []).map(x => x.message_id));
+  $('#main').innerHTML = `<p style="margin:0"><button class="alt sm" id="mBack">← Back to exams</button></p><h2>Messages from your teacher</h2>` +
+    (m.data.length ? m.data.map(x => `<div class="card"><p style="margin:0 0 4px">${seen.has(x.id) ? '' : '<span class="badge bad">NEW</span> '}${x.student_id ? '<span class="badge">Private</span> ' : ''}<span class="mute">${esc(new Date(x.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}</span></p>
+      <h3 style="margin:.3em 0">${esc(x.title)}</h3><p style="white-space:pre-line;margin:0">${esc(x.body)}</p></div>`).join('') : '<p class="mute">No messages yet.</p>');
+  $('#mBack').onclick = dash;
+  const fresh = m.data.filter(x => !seen.has(x.id));
+  if (fresh.length) {
+    const uid = (await sb.auth.getSession()).data.session?.user.id;
+    if (uid) await sb.from('message_reads').upsert(fresh.map(x => ({ message_id: x.id, user_id: uid })), { onConflict: 'message_id,user_id', ignoreDuplicates: true });
+  }
 }

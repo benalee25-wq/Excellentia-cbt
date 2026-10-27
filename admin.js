@@ -36,7 +36,7 @@ function go(t, pop) {
   tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   if (!pop && hist[hist.length - 1] !== t) { hist.push(t); history[hist.length === 1 ? 'replaceState' : 'pushState']({ t }, '', '#' + t); }
   $('#bBack').classList.toggle('hide', hist.length < 2);
-  ({ bank, upload, exams, students, results, materials, activity })[t]();
+  ({ bank, upload, exams, students, results, materials, activity, messages })[t]();
 }
 $('#bBack').onclick = () => history.back();
 window.addEventListener('popstate', () => {
@@ -633,5 +633,57 @@ function askYes(title, body, yes = 'Yes', no = 'Cancel') {
     document.body.append(m);
     const done = v => { m.remove(); res(v); };
     $('#aYes', m).onclick = () => done(true); $('#aNo', m).onclick = () => done(false);
+  });
+}
+
+
+// ================= MESSAGES TO STUDENTS =================
+async function messages() {
+  $('#main').innerHTML = `<div class="card"><h3>New message</h3>
+    <label>Send to</label><select id="msTo"><option value="All">All students</option>${CLASSES.map(c => `<option value="${c}">${c} (whole class)</option>`).join('')}<option value="ONE">One student only…</option></select>
+    <div id="msOne" style="display:none"><label>Student username</label><input id="msUser" autocapitalize="off" autocomplete="off" placeholder="e.g. zoe.idemudia"></div>
+    <label>Title</label><input id="msTitle" maxlength="100" placeholder="e.g. Mathematics test on Friday">
+    <label>Message</label><textarea id="msBody" rows="5" maxlength="2000" placeholder="Type your message here"></textarea>
+    <div class="row" style="margin-top:10px"><button id="msSend">Send message</button></div></div><div id="msList"></div>`;
+  $('#msTo').onchange = () => { $('#msOne').style.display = $('#msTo').value === 'ONE' ? 'block' : 'none'; };
+  $('#msSend').onclick = e => run(e.target, async () => {
+    const to = $('#msTo').value, title = $('#msTitle').value.trim(), body = $('#msBody').value.trim();
+    if (!title || !body) return toast('Please write a title and a message.', true);
+    const row = { title, body, class_level: 'All', student_id: null };
+    let who = to === 'All' ? 'all students' : to + ' students';
+    if (to === 'ONE') {
+      const u = $('#msUser').value.trim().toLowerCase(); if (!u) return toast('Type the student\'s username.', true);
+      const { data: st, error: e1 } = await sb.from('profiles').select('id,full_name').eq('role', 'student').eq('username', u).maybeSingle();
+      if (e1) return toast(friendly(e1.message), true);
+      if (!st) return toast('No student found with that username.', true);
+      row.student_id = st.id; who = st.full_name;
+    } else if (to !== 'All') row.class_level = to;
+    const { error } = await sb.from('messages').insert(row); if (error) return toast(friendly(error.message), true);
+    $('#msTitle').value = ''; $('#msBody').value = ''; toast('Sent to ' + who); loadMsgs();
+  });
+  loadMsgs();
+}
+async function loadMsgs() {
+  const { data, error } = await sb.from('messages').select('*').order('created_at', { ascending: false }).limit(100);
+  if (error) return toast(friendly(error.message), true);
+  const [{ data: st }, { data: names }] = await Promise.all([
+    sb.rpc('admin_message_stats'),
+    (() => { const ids = [...new Set(data.map(x => x.student_id).filter(Boolean))]; return ids.length ? sb.from('profiles').select('id,full_name,username').in('id', ids) : Promise.resolve({ data: [] }); })()]);
+  const stat = Object.fromEntries((st || []).map(x => [x.message_id, x])), nm = Object.fromEntries((names || []).map(x => [x.id, x]));
+  $('#msList').innerHTML = `<p class="mute">${data.length} message(s) sent</p>` + (data.map(x => {
+    const s = stat[x.id], to = x.student_id ? (nm[x.student_id] ? `${nm[x.student_id].full_name} (private)` : 'One student (private)') : x.class_level === 'All' ? 'All students' : x.class_level + ' students';
+    return `<div class="card"><span class="badge gold">${esc(to)}</span> <span class="mute">${esc(fmtWhen(x.created_at))}</span>
+      <h3 style="margin:.4em 0 .2em">${esc(x.title)}</h3><p style="white-space:pre-line;margin:0 0 8px">${esc(x.body)}</p>
+      <p class="mute" style="margin:0 0 8px">${s ? `Read by ${s.reads} of ${s.audience}` : ''}</p><button class="alt sm" data-md="${x.id}">Delete</button></div>`;
+  }).join('') || '<div class="card">No messages sent yet.</div>');
+  $$('[data-md]').forEach(b => b.onclick = async () => {
+    const x = data.find(v => v.id === b.dataset.md);
+    if (!(await askYes('Delete this message?', `“${x.title}”\n\nStudents will no longer see it. This cannot be undone.`, 'Yes, delete', 'Keep it'))) return;
+    run(b, async () => {
+      const { data: gone, error } = await sb.from('messages').delete().eq('id', x.id).select('id');
+      if (error) return toast(friendly(error.message), true);
+      if (!gone || !gone.length) return toast('Could not delete it. Refresh and try again.', true);
+      toast('Deleted'); loadMsgs();
+    });
   });
 }

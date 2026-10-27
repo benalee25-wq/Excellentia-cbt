@@ -50,7 +50,32 @@ function brand() {
 function theme() {
   const k = 'cbt-theme'; const set = v => document.documentElement.dataset.theme = v;
   set(localStorage.getItem(k) || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light'));
-  $$('.themebtn').forEach(b => b.onclick = () => { const v = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; localStorage.setItem(k, v); set(v); });
+  try { applySkin(localStorage.getItem('cbt-skin') || 'green'); } catch (e) { applySkin('green'); }
+  $$('.themebtn').forEach(b => b.onclick = lookPicker);
+}
+// ===== Look & feel templates =====
+const SKINS = [['green', 'Classic green'], ['ocean', 'Ocean blue'], ['royal', 'Royal purple'], ['sunset', 'Sunset orange'], ['rose', 'Rose pink'], ['slate', 'Slate grey'], ['notebook', 'Exercise book'], ['graph', 'Graph paper'], ['dots', 'Soft dots'], ['aurora', 'Aurora']];
+function applySkin(k) { document.documentElement.dataset.skin = SKINS.some(s => s[0] === k) ? k : 'green'; }
+function lookPicker() {
+  const H = document.documentElement, d = document.createElement('div'); d.className = 'modal';
+  d.innerHTML = `<div style="max-width:520px"><h2>Choose a look</h2>
+    <div class="row"><button class="alt" data-m="light"></button><button class="alt" data-m="dark"></button></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">${SKINS.map(([k, n]) => `<button class="alt" data-k="${k}" style="padding:8px;text-align:left"><div data-skin="${k}" style="border-radius:8px;overflow:hidden;border:1px solid var(--line);background-color:var(--bg);background-image:var(--pat,none);background-size:var(--ps,auto)"><div style="background:var(--green);height:16px"></div><div style="height:34px"></div></div><span style="display:block;margin-top:6px;font-size:.9rem">${n}</span></button>`).join('')}</div>
+    <p class="mute" style="margin:10px 0 0">Your choice is saved on this device. Patterns show in light mode.</p>
+    <div class="row" style="margin-top:12px"><button id="lkX">Done</button></div></div>`;
+  document.body.append(d);
+  const paint = () => {
+    const dark = H.dataset.theme === 'dark', cur = H.dataset.skin || 'green';
+    $('[data-m=light]', d).textContent = (dark ? '' : '✓ ') + '☀️ Light'; $('[data-m=dark]', d).textContent = (dark ? '✓ ' : '') + '🌙 Dark';
+    $$('[data-k]', d).forEach(b => { b.style.border = b.dataset.k === cur ? '2px solid var(--green)' : ''; });
+  };
+  d.onclick = e => {
+    const mb = e.target.closest('[data-m]'), kb = e.target.closest('[data-k]');
+    if (mb) { H.dataset.theme = mb.dataset.m; try { localStorage.setItem('cbt-theme', mb.dataset.m); } catch (x) {} paint(); }
+    else if (kb) { applySkin(kb.dataset.k); try { localStorage.setItem('cbt-skin', kb.dataset.k); } catch (x) {} paint(); }
+    else if (e.target === d || e.target.id === 'lkX') d.remove();
+  };
+  paint();
 }
 function parseCSV(text) {            // small RFC4180 parser
   const rows = []; let r = [], f = '', q = false;

@@ -66,3 +66,18 @@ sup,sub{font-size:.72em;line-height:0}
 a.btn{display:inline-block;text-align:center;text-decoration:none;line-height:1.5;font:inherit;font-weight:600;border-radius:10px;padding:11px 16px;background:var(--green);color:#fff;min-height:44px}
 a.btn.alt{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
 video.mv{display:block;margin:0 auto;width:100%;max-width:100%;max-height:60vh;border-radius:10px;background:#000}
+
+/* ===== Look & feel templates (chosen with the 🎨 button; saved per device) ===== */
+body{background-image:var(--pat,none);background-size:var(--ps,auto)}
+[data-skin=green]{--green:#0b6e4f;--gold:#f2b134;--bg:#f6f7f2}
+[data-skin=ocean]{--green:#0b5cad;--gold:#ffc83d;--bg:#eaf3fc;--pat:linear-gradient(160deg,#f3f9ff 0%,#d3e6f8 100%)}
+[data-skin=royal]{--green:#5b2a86;--gold:#f5b942;--bg:#f4eefb;--pat:linear-gradient(160deg,#faf6ff 0%,#e4d6f5 100%)}
+[data-skin=sunset]{--green:#c2410c;--gold:#fbbf24;--bg:#fff4e8;--pat:linear-gradient(160deg,#fffaf3 0%,#fde0c4 100%)}
+[data-skin=rose]{--green:#be185d;--gold:#fcd34d;--bg:#fdeff5;--pat:linear-gradient(160deg,#fff7fa 0%,#fbd5e5 100%)}
+[data-skin=slate]{--green:#334155;--gold:#f2b134;--bg:#f1f5f9}
+[data-skin=notebook]{--green:#1d4e89;--gold:#f2b134;--bg:#fffdf6;--pat:linear-gradient(90deg,transparent 42px,rgba(220,70,70,.35) 42px,rgba(220,70,70,.35) 44px,transparent 44px),repeating-linear-gradient(transparent 0,transparent 31px,rgba(70,120,200,.22) 31px,rgba(70,120,200,.22) 32px)}
+[data-skin=graph]{--green:#0b6e4f;--gold:#f2b134;--bg:#f7fbf8;--pat:linear-gradient(rgba(11,110,79,.13) 1px,transparent 1px),linear-gradient(90deg,rgba(11,110,79,.13) 1px,transparent 1px);--ps:24px 24px}
+[data-skin=dots]{--green:#0f766e;--gold:#f5b942;--bg:#f6faf9;--pat:radial-gradient(rgba(15,118,110,.22) 1.3px,transparent 1.6px);--ps:20px 20px}
+[data-skin=aurora]{--green:#0f766e;--gold:#f5c542;--bg:#e8f7f3;--pat:linear-gradient(135deg,#e6f6ef 0%,#e3f0fb 50%,#efe9fb 100%)}
+/* dark mode wins over every template (kept last on purpose) */
+html[data-theme=dark]{--bg:#101a15;--card:#18251e;--ink:#eaf1ec;--mute:#9db0a5;--line:#2b3b32;--bad:#ff7a6e;--ok:#5fd493;--pat:none}

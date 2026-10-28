@@ -9,8 +9,6 @@ const CFG = {
   EMAIL_DOMAIN: 'school.local'   // students sign in as username@school.local
 };
 const CLASSES = ['JSS1','JSS2','JSS3','SS1','SS2','SS3'];
-document.documentElement.style.setProperty('--green', CFG.GREEN);
-document.documentElement.style.setProperty('--gold', CFG.GOLD);
 
 // Teacher page and student page keep separate saved logins, so one never signs the other out
 const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, {
@@ -55,7 +53,14 @@ function theme() {
 }
 // ===== Look & feel templates =====
 const SKINS = [['green', 'Classic green'], ['ocean', 'Ocean blue'], ['royal', 'Royal purple'], ['sunset', 'Sunset orange'], ['rose', 'Rose pink'], ['slate', 'Slate grey'], ['notebook', 'Exercise book'], ['graph', 'Graph paper'], ['dots', 'Soft dots'], ['aurora', 'Aurora']];
-function applySkin(k) { document.documentElement.dataset.skin = SKINS.some(s => s[0] === k) ? k : 'green'; }
+function applySkin(k) {
+  const H = document.documentElement; k = SKINS.some(s => s[0] === k) ? k : 'green'; H.dataset.skin = k;
+  // your school colours (CFG.GREEN / CFG.GOLD) belong to the Classic green look only
+  if (k === 'green') { H.style.setProperty('--green', CFG.GREEN); H.style.setProperty('--gold', CFG.GOLD); }
+  else { H.style.removeProperty('--green'); H.style.removeProperty('--gold'); }
+  let m = document.querySelector('meta[name=theme-color]'); if (!m) { m = document.createElement('meta'); m.name = 'theme-color'; document.head.append(m); }
+  m.content = getComputedStyle(H).getPropertyValue('--green').trim() || CFG.GREEN;   // colours the phone's address bar too
+}
 function lookPicker() {
   const H = document.documentElement, d = document.createElement('div'); d.className = 'modal';
   d.innerHTML = `<div style="max-width:520px"><h2>Choose a look</h2>

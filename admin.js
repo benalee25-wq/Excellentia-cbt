@@ -52,8 +52,12 @@ async function bank() {
     <div><label>Subject</label><input id="fs" placeholder="e.g. Mathematics"></div>
     <div><label>Topic</label><input id="ft"></div>
     <div><label>Difficulty</label><select id="fd"><option value="">All</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div></div>
-    <div class="row" style="margin-top:10px"><button id="bFind">Search</button><button class="gold" id="bAdd">+ Add question</button></div></div><div id="list"></div>`;
+    <div class="row" style="margin-top:10px"><button id="bFind">Search</button><button class="gold" id="bAdd">+ Add question</button></div></div><div id="chips" style="margin:8px 0"></div><div id="list"></div>`;
   $('#bFind').onclick = loadBank; $('#bAdd').onclick = () => qForm();
+  Promise.all(CLASSES.map(c => sb.from('questions').select('id', { count: 'exact', head: true }).eq('class_level', c))).then(rs => {
+    $('#chips').innerHTML = '<span class="mute">Show only: </span>' + ['', ...CLASSES].map((c, i) => `<button class="alt sm" data-ch="${c}" style="margin:2px">${c || 'All'}${i ? ' (' + (rs[i - 1].count ?? 0) + ')' : ''}</button>`).join('');
+    $$('[data-ch]').forEach(b => b.onclick = () => { $('#fc').value = b.dataset.ch; loadBank(); });
+  });
   loadBank();
 }
 async function loadBank() {
@@ -102,7 +106,7 @@ const store = k => localStorage.getItem('cbt-' + k) || '';
 let parsed = [];
 function upload() {
   $('#main').innerHTML = `<div class="card"><h2>Add questions</h2>
-  <div class="row"><div><label>Class</label><select id="uc">${opts(CLASSES, store('uc'))}</select></div>
+  <div class="row"><div><label>Class (choose it every time)</label><select id="uc"><option value="">Choose the class…</option>${opts(CLASSES)}</select></div>
   <div><label>Subject</label><input id="us" value="${esc(store('us'))}" placeholder="e.g. Mathematics"></div>
   <div><label>Topic (optional)</label><input id="ut"></div></div>
   <label>Paste your questions here (from Word, PDF or WhatsApp)</label>
@@ -133,7 +137,7 @@ async function readFile(f) {
 }
 async function finish(objs) {
   if (!objs.length) return toast('No questions found. Each question needs its options (A, B, C, D) and an answer.', true);
-  localStorage.setItem('cbt-uc', $('#uc').value); localStorage.setItem('cbt-us', $('#us').value.trim());
+  localStorage.setItem('cbt-us', $('#us').value.trim());   // the class is never remembered, so one class can't be saved into another by mistake
   const { data: old } = await sb.from('questions').select('class_level,subject,question').limit(5000);
   const seen = new Set((old || []).map(o => key(o.class_level, o.subject, o.question)));
   parsed = objs.map(o => check(o, seen)); preview();
@@ -164,7 +168,10 @@ function parseText(text) {
 }
 function check(o, seen) {
   const e = [], L = ['a', 'b', 'c', 'd'];
-  const cls = String(o.class || $('#uc').value || '').toUpperCase().replace(/\s+/g, ''); if (!CLASSES.includes(cls)) e.push('Class must be one of ' + CLASSES.join(', '));
+  const chosen = $('#uc').value, fcls = String(o.class || '').toUpperCase().replace(/\s+/g, ''), cls = chosen || fcls;
+  if (!cls) e.push('Choose the class above (or add a Class column to the file)');
+  else if (!CLASSES.includes(cls)) e.push('Class must be one of ' + CLASSES.join(', '));
+  else if (chosen && fcls && fcls !== chosen) e.push(`The file says ${fcls} but you chose ${chosen}`);
   const r = { class_level: cls, subject: String(o.subject || $('#us').value || '').trim(), topic: String(o.topic ?? $('#ut').value ?? '').trim(), question: String(o.question || '').trim(),
     explanation: String(o.explanation || '').trim() || null, difficulty: ['Easy', 'Medium', 'Hard'].find(d => d.toLowerCase() === String(o.difficulty || 'Medium').trim().toLowerCase()) || 'Medium', marks: parseFloat(o.marks) || 1 };
   L.forEach(k => r['opt_' + k] = String(o['option' + k] ?? o[k] ?? '').trim() || null);
@@ -179,9 +186,10 @@ function preview() {
   const ok = parsed.filter(p => !p.e.length), bad = parsed.length - ok.length;
   $('#prev').innerHTML = `<div class="card"><h3>${parsed.length} question(s) found · ${ok.length} ready${bad ? ` · <span class="err">${bad} need attention</span>` : ''}</h3>
   <p class="mute">${bad ? 'Where the answer is missing, choose it in the Answer box. Red rows are skipped when you save.' : 'Everything looks good.'}</p>
+  <p style="margin:6px 0"><b>Will be saved to:</b> ${Object.entries(ok.reduce((d, p) => { const k = p.r.class_level + ' · ' + p.r.subject; d[k] = (d[k] || 0) + 1; return d; }, {})).map(([k, n]) => `<span class="badge gold">${esc(k)}: ${n}</span>`).join(' ') || 'nothing yet'}</p>
   <button id="bSave" ${ok.length ? '' : 'disabled'} style="width:100%">Save ${ok.length} question(s)</button>
   <div class="scroll"><table><tr><th>#</th><th>Question and options</th><th>Answer</th></tr>
-  ${parsed.map((p, i) => `<tr class="${p.e.length ? 'errrow' : ''}"><td>${i + 1}</td><td>${fmt(p.r.question).slice(0, 160)}<br><span class="mute">${['a', 'b', 'c', 'd'].filter(k => p.r['opt_' + k]).map(k => k.toUpperCase() + '. ' + fmt(p.r['opt_' + k])).join(' · ')}</span>${p.e.length ? '<br><span class="err">' + esc(p.e.join('; ')) + '</span>' : ''}</td>
+  ${parsed.map((p, i) => `<tr class="${p.e.length ? 'errrow' : ''}"><td>${i + 1}</td><td><span class="badge">${esc(p.r.class_level || '?')}</span> ${fmt(p.r.question).slice(0, 160)}<br><span class="mute">${['a', 'b', 'c', 'd'].filter(k => p.r['opt_' + k]).map(k => k.toUpperCase() + '. ' + fmt(p.r['opt_' + k])).join(' · ')}</span>${p.e.length ? '<br><span class="err">' + esc(p.e.join('; ')) + '</span>' : ''}</td>
   <td><select data-i="${i}" style="width:72px"><option value="">?</option>${[...'ABCD'].map(c => `<option ${p.r.correct === c ? 'selected' : ''}>${c}</option>`).join('')}</select></td></tr>`).join('')}</table></div></div>`;
   $$('#prev select').forEach(s => s.onchange = () => {
     const p = parsed[+s.dataset.i]; p.r.correct = s.value; p.e = p.e.filter(x => !/correct answer/i.test(x));
@@ -292,6 +300,8 @@ function eForm(x = {}) {
 async function students() {
   $('#main').innerHTML = `<div id="rq"></div><div class="card"><h3>Login sheet</h3><p class="mute">Gives every student in the chosen class a NEW random password, then lets you download or print all the logins. Old passwords stop working.</p>
   <div class="row"><select id="bc"><option value="">All classes</option>${opts(CLASSES)}</select><select id="bs"><option value="">All sections</option></select><button class="gold" id="bBulk">Generate logins</button></div><div id="bulkOut"></div></div><div class="card"><h2>Register students in bulk</h2><p>CSV columns: <b>Username, Full Name, Password, Class</b>, and optional <b>Section</b> (like 1A Diamond). Leave Password empty to auto-generate a safe one (or use 8+ characters).</p>
+  <label>Class for this file (recommended: one class per file)</label><select id="sUpC"><option value="">Choose class, or use the Class column</option>${opts(CLASSES)}</select>
+  <p class="mute">If you choose a class, every row goes into it, and any row whose Class column says something different is rejected, so classes cannot get mixed. Usernames are shared by the whole school: two students cannot both be ade001, so add the class, like jss2.ade001.</p>
   <div class="row"><button class="alt" id="sTpl">Download CSV template</button></div><label>Upload CSV</label><input type="file" id="sFile" accept=".csv"><div id="sOut"></div></div>
   <div class="card"><div class="row"><select id="sc"><option value="">All classes</option>${opts(CLASSES)}</select><select id="ss"><option value="">All sections</option></select></div><div class="scroll" id="sList"></div></div>`;
   $('#sTpl').onclick = () => dl('students-template.csv', 'Username,Full Name,Password,Class,Section\nade001,Ade Bello,,JSS1,1A Diamond\nchi002,Chioma Okoro,,SS2,2B');
@@ -306,7 +316,7 @@ async function loadSections() {
 }
 async function listStudents() {
   let q = sb.from('profiles').select('username,full_name,class_level,section').eq('role', 'student').order('class_level').order('section').order('full_name').limit(1000); if ($('#sc').value) q = q.eq('class_level', $('#sc').value); if ($('#ss').value) q = q.eq('section', $('#ss').value);
-  const { data } = await q; $('#sList').innerHTML = `<p class="mute">${(data || []).length} student(s)</p><table><tr><th>Username</th><th>Name</th><th>Class</th><th></th></tr>${(data || []).map(s => `<tr><td>${esc(s.username)}</td><td>${esc(s.full_name)}</td><td>${esc(classLabel(s))}</td><td><button class="alt sm" data-ed="${esc(s.username)}">Edit</button> <button class="alt sm" data-rs="${esc(s.username)}">Reset password</button> <button class="bad sm" data-del="${esc(s.username)}">Delete</button></td></tr>`).join('')}</table>`;
+  const { data } = await q; $('#sList').innerHTML = `<p class="mute">${(data || []).length} student(s)</p><table><tr><th>Username</th><th>Name</th><th>Class</th><th></th></tr>${(() => { let last = null; const n = {}; (data || []).forEach(s => n[s.class_level] = (n[s.class_level] || 0) + 1); return (data || []).map(s => { const h = s.class_level !== last ? (last = s.class_level, `<tr><td colspan="4" style="background:var(--line)"><b>${esc(s.class_level || 'No class')}</b> · ${n[s.class_level]} student(s)</td></tr>`) : ''; return h + `<tr><td>${esc(s.username)}</td><td>${esc(s.full_name)}</td><td>${esc(classLabel(s))}</td><td><button class="alt sm" data-ed="${esc(s.username)}">Edit</button> <button class="alt sm" data-rs="${esc(s.username)}">Reset password</button> <button class="bad sm" data-del="${esc(s.username)}">Delete</button></td></tr>`; }).join(''); })()}</table>`;
   $$('[data-ed]').forEach(b => b.onclick = () => editStudent(data.find(x => x.username === b.dataset.ed)));
   $$('[data-rs]').forEach(b => b.onclick = () => resetPw(b.dataset.rs));
   $$('[data-del]').forEach(b => b.onclick = () => delStudent(b.dataset.del));
@@ -393,19 +403,26 @@ async function regStudents(f) {
     const head = (rows.shift() || []).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
     const iU = head.findIndex(h => h.includes('user')), iP = head.findIndex(h => h.includes('pass')), iC = head.findIndex(h => h.includes('class')), iS = head.findIndex(h => h.includes('section'));
     let iN = head.findIndex(h => h.includes('fullname')); if (iN < 0) iN = head.findIndex(h => h.includes('name') && !h.includes('user'));
-    if (iU < 0 || iN < 0 || iC < 0) { out.innerHTML = '<p class="err">The first row must have the headings Username, Full Name, Password and Class. Tap "Download CSV template" and use it.</p>'; return; }
+    const chosen = $('#sUpC').value;
+    if (iU < 0 || iN < 0 || (iC < 0 && !chosen)) { out.innerHTML = '<p class="err">The first row must have the headings Username, Full Name, Password and Class. Tap "Download CSV template" and use it.</p>'; return; }
     if (!rows.length) { out.innerHTML = '<p class="err">The file has no students under the headings.</p>'; return; }
     const { data: key, error: ke } = await sb.rpc('new_reg_key');
     if (ke || !key) { out.innerHTML = `<p class="err">Could not start registration: ${esc(ke ? ke.message : 'no key')}. Have you run the security SQL?</p>`; return; }
-    const { data: have } = await sb.from('profiles').select('username').limit(5000);
-    const exist = new Set((have || []).map(p => p.username));      // already registered: skip them
+    const { data: have } = await sb.from('profiles').select('username,full_name,class_level').limit(5000);
+    const exist = new Map((have || []).map(p => [p.username, p]));      // already registered
     const regClient = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
     let lock = null; try { lock = await navigator.wakeLock.request('screen'); } catch (e) { }   // keep the screen awake
     try {
       for (let i = 0; i < rows.length; i++) {
-        const r = rows[i], u0 = (r[iU] || '').trim(), u = u0.toLowerCase(), n = (r[iN] || '').trim(), p0 = iP >= 0 ? (r[iP] || '').trim() : '', cls = (r[iC] || '').toUpperCase().replace(/\s+/g, ''), pw = p0 || genPw(), sec = iS >= 0 ? (r[iS] || '').trim().slice(0, 40) : '';
+        const r = rows[i], u0 = (r[iU] || '').trim(), u = u0.toLowerCase(), n = (r[iN] || '').trim(), p0 = iP >= 0 ? (r[iP] || '').trim() : '', fcls = iC >= 0 ? (r[iC] || '').toUpperCase().replace(/\s+/g, '') : '', cls = chosen || fcls, pw = p0 || genPw(), sec = iS >= 0 ? (r[iS] || '').trim().slice(0, 40) : '';
         if (!/^[a-z0-9._-]{3,30}$/.test(u) || !n || weakPw(pw) || !CLASSES.includes(cls)) { bad.push(`Row ${i + 2} (${u0 || 'blank'}): needs a username (3-30 letters or numbers, no spaces), a name, a class like JSS1, and a password of 8+ characters with letters and numbers that is not easy to guess (or leave it empty)`); continue; }
-        if (exist.has(u)) { skipped++; continue; }
+        if (chosen && fcls && fcls !== chosen) { bad.push(`Row ${i + 2} (${u}): the Class column says ${fcls} but you chose ${chosen}. Not registered.`); continue; }
+        const ex0 = exist.get(u);
+        if (ex0) {   // the same person registered before = skip; someone else using this username = a problem to fix, never silently skipped
+          if (ex0.class_level === cls && String(ex0.full_name).trim().toLowerCase() === n.toLowerCase()) skipped++;
+          else bad.push(`Row ${i + 2} (${u}): this username already belongs to ${ex0.full_name} (${ex0.class_level || 'no class'}). Use a different username for ${n}.`);
+          continue;
+        }
         let error = null;
         for (let t = 0; t < 8; t++) {
           out.innerHTML = `<p class="mute">Registering ${i + 1} of ${rows.length}: ${esc(u)} (${ok} done)</p>`;
@@ -419,6 +436,7 @@ async function regStudents(f) {
     } finally { if (lock) lock.release().catch(() => { }); await sb.rpc('close_registration'); }   // the key stops working now
   } catch (e) { bad.push('Stopped: ' + (e.message || e)); }
   out.innerHTML = `<p><b>${ok}</b> student(s) registered${skipped ? `, ${skipped} already registered (skipped)` : ''}.</p>${ok ? '<button class="gold" id="bCred">Download login details (CSV)</button><p class="mute">Save the file now: passwords are not shown again. Give each student only their own details, then delete the file.</p>' : ''}${bad.length ? `<p class="err">${bad.length} problem(s):</p><ul>${bad.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}`;
+  $('#sFile').value = '';
   if (ok) $('#bCred').onclick = () => dl('student-logins.csv', ['Username,Full Name,Password,Class,Section', ...creds.map(r => r.map(csvCell).join(','))].join('\n'));
   listStudents();
 }

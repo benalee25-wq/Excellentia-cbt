@@ -36,7 +36,7 @@ function go(t, pop) {
   tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   if (!pop && hist[hist.length - 1] !== t) { hist.push(t); history[hist.length === 1 ? 'replaceState' : 'pushState']({ t }, '', '#' + t); }
   $('#bBack').classList.toggle('hide', hist.length < 2);
-  ({ bank, upload, exams, students, results, materials, activity, messages })[t]();
+  ({ bank, upload, exams, students, results, materials, activity, messages, backup })[t]();
 }
 $('#bBack').onclick = () => history.back();
 window.addEventListener('popstate', () => {
@@ -704,4 +704,53 @@ async function loadMsgs() {
       toast('Deleted'); loadMsgs();
     });
   });
+}
+
+
+// ================= BACKUP =================
+const BK_TABLES = [['profiles', 'Students and teachers', 'id'], ['questions', 'Question bank', 'id'], ['exams', 'Exams', 'id'], ['attempts', 'Exam attempts and scores', 'id'],
+  ['materials', 'Study materials (list only)', 'id'], ['messages', 'Messages', 'id'], ['message_reads', 'Who read which message', 'message_id'],
+  ['login_log', 'Sign-in activity', 'id'], ['audit_log', 'Audit log', 'id'], ['reset_requests', 'Password reset requests', 'id']];
+async function fetchAll(table, order) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    let { data, error } = await sb.from(table).select('*').order(order).range(from, from + 999);
+    if (error) ({ data, error } = await sb.from(table).select('*').range(from, from + 999));   // retry without sorting
+    if (error) return { error };
+    out.push(...data); if (data.length < 1000) break;
+  }
+  if (table === 'profiles') out.forEach(r => { delete r.session_token; });   // a live login token must never go into a file
+  return { data: out };
+}
+async function backup() {
+  const last = localStorage.getItem('cbt-lastbackup');
+  $('#main').innerHTML = `<div class="card"><h2>Back up your data</h2>
+    <p>${last ? `Your last backup from this phone: <b>${esc(fmtWhen(last))}</b>.` : '<b>You have not made a backup from this phone yet.</b>'}</p>
+    <p class="mute">This saves a copy of your students, questions, exams, scores, messages and sign-in history as a file on your phone. Make one after every exam period and before any big change.</p>
+    <div class="row"><button id="bkJson">Download backup (JSON)</button><button class="alt" id="bkXlsx">Download backup (Excel)</button></div>
+    <p id="bkMsg" class="mute" style="margin-top:10px"></p></div>
+    <div class="card"><h3>Please read</h3><ul>
+    <li>The <b>JSON</b> file is the complete copy. The <b>Excel</b> file is the same data, easier to read.</li>
+    <li>The file contains <b>correct answers and exam codes</b>. Keep it private: move it to a safe place (Google Drive, a flash drive) and delete it from your Downloads.</li>
+    <li><b>Passwords cannot be backed up.</b> They are stored scrambled by Supabase. If accounts were ever lost, students would get new passwords from the Login sheet.</li>
+    <li><b>Files</b> (study-material uploads and question pictures) are not inside the backup. Their list is, and the files stay in Supabase Storage.</li></ul></div>`;
+  const go = kind => run($(kind === 'json' ? '#bkJson' : '#bkXlsx'), async () => {
+    const msg = $('#bkMsg'), tables = {}, notes = [];
+    for (let i = 0; i < BK_TABLES.length; i++) {
+      const [t, label, ord] = BK_TABLES[i]; msg.textContent = `Reading ${label.toLowerCase()}… (${i + 1} of ${BK_TABLES.length})`;
+      const { data, error } = await fetchAll(t, ord);
+      if (error) notes.push(`${t}: not saved (${error.message})`); else tables[t] = data;
+    }
+    const madeAt = new Date().toISOString(), counts = Object.fromEntries(Object.entries(tables).map(([k, v]) => [k, v.length]));
+    if (kind === 'json') dl(`excellentia-backup-${dayStr()}.json`, JSON.stringify({ app: 'Excellentia CBT', school: CFG.SCHOOL, made_at: madeAt, counts, notes, tables }), 'application/json');
+    else {
+      const wb = XLSX.utils.book_new(), flat = r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v !== null && typeof v === 'object' ? JSON.stringify(v).slice(0, 32000) : (typeof v === 'string' ? safeCell(v).slice(0, 32000) : v)]));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ Backup: 'Excellentia CBT', School: CFG.SCHOOL, 'Date made': nowStr(), ...Object.fromEntries(Object.entries(counts).map(([k, v]) => ['Rows in ' + k, v])) }]), 'About');
+      for (const [t, v] of Object.entries(tables)) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(v.length ? v.map(flat) : [{ note: 'No rows' }]), t.slice(0, 31));
+      XLSX.writeFile(wb, `excellentia-backup-${dayStr()}.xlsx`);
+    }
+    localStorage.setItem('cbt-lastbackup', madeAt);
+    msg.innerHTML = `Done. Saved ${Object.values(counts).reduce((a, b) => a + b, 0)} rows from ${Object.keys(counts).length} tables.${notes.length ? `<br><span class="err">${notes.map(esc).join('<br>')}</span>` : ''}<br>Now move the file somewhere safe.`;
+  });
+  $('#bkJson').onclick = () => go('json'); $('#bkXlsx').onclick = () => go('xlsx');
 }

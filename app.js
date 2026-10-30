@@ -53,7 +53,7 @@ async function dash() {
   const soon = data.filter(x => !x.submitted_at && x.start_at && new Date(x.start_at) > now);
   const missed = data.filter(x => !x.submitted_at && x.end_at && new Date(x.end_at) < now);
   const card = (x, body) => `<div class="card"><h3>${esc(x.title)}</h3><p class="mute">${esc(x.subject)}${x.term ? ' · ' + esc(x.term) : ''} · ${x.duration_min} min · ${x.num_questions} questions</p>${body}</div>`;
-  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bMsg">📢 Messages</button> <button class="alt sm" id="bMat">📚 Study materials</button> <button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
+  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bPas">📖 Passages</button> <button class="alt sm" id="bMsg">📢 Messages</button> <button class="alt sm" id="bMat">📚 Study materials</button> <button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
   h += open.map(x => card(x, `${x.attempt_id ? '<span class="badge gold">In progress</span> ' : ''}${x.end_at ? `<p class="mute">Closes ${fm(x.end_at)}</p>` : ''}<button data-go="${x.id}" data-code="${x.has_code}">${x.attempt_id ? 'Resume exam' : 'Start exam'}</button>`)).join('') || '<p class="mute">No exam is open right now.</p>';
   if (soon.length) h += `<h2>Upcoming</h2>` + soon.map(x => card(x, `<p>Opens ${fm(x.start_at)}</p>`)).join('');
   if (done.length) h += `<h2>Completed</h2>` + done.map(x => { const pc = x.total ? Math.round(x.score / x.total * 100) : 0; return card(x, `<p><b>${x.score}/${x.total}</b> (${pc}%) <span class="badge ${pc >= x.pass_mark ? 'ok' : 'bad'}">${pc >= x.pass_mark ? 'Passed' : 'Not passed'}</span></p>${x.show_review ? `<button class="alt sm" data-rev="${x.attempt_id}">Review answers</button>` : ''}`); }).join('');
@@ -61,7 +61,7 @@ async function dash() {
   $('#main').innerHTML = h;
   $('#bPw').onclick = changePw;
   $('#bMat').onclick = mats;
-  $('#bMsg').onclick = msgs; msgBadge();
+  $('#bMsg').onclick = msgs; msgBadge(); $('#bPas').onclick = psgList;
   $$('[data-go]').forEach(b => b.onclick = () => begin(b, b.dataset.go, b.dataset.code === 'true' && !data.find(x => x.id === b.dataset.go).attempt_id));
   $$('[data-rev]').forEach(b => b.onclick = () => review(b.dataset.rev));
 }
@@ -265,4 +265,26 @@ async function msgs() {
     const uid = (await sb.auth.getSession()).data.session?.user.id;
     if (uid) await sb.from('message_reads').upsert(fresh.map(x => ({ message_id: x.id, user_id: uid })), { onConflict: 'message_id,user_id', ignoreDuplicates: true });
   }
+}
+
+// ---------- passages to study (separate from the exam) ----------
+async function psgList() {
+  $('#main').innerHTML = '<p class="mute">Loading passages…</p>';
+  const { data, error } = await sb.from('passages').select('*').order('subject').order('title').limit(300);
+  if (error) { $('#main').innerHTML = `<p class="err">${esc(friendly(error.message))}</p><button class="alt" id="pBack">Back</button>`; $('#pBack').onclick = dash; return; }
+  const subs = [...new Set(data.map(x => x.subject))].sort();
+  $('#main').innerHTML = `<p style="margin:0"><button class="alt sm" id="pBack">← Back to exams</button></p><h2>📖 Passages to study</h2>
+    <p class="mute">Tap a passage to read it. Study it well before your exam.</p>
+    <div class="row"><div><input id="psr" placeholder="Search passages" aria-label="Search"></div>
+    <div><select id="psf" aria-label="Subject"><option value="">All subjects</option>${subs.map(v => `<option>${esc(v)}</option>`).join('')}</select></div></div><div id="plist" style="margin-top:12px"></div>`;
+  $('#pBack').onclick = dash;
+  const draw = () => {
+    const q = $('#psr').value.trim().toLowerCase(), sf = $('#psf').value;
+    const rows = data.filter(x => (!sf || x.subject === sf) && (!q || `${x.title} ${x.topic || ''} ${x.description || ''}`.toLowerCase().includes(q)));
+    $('#plist').innerHTML = rows.map(x => `<div class="card"><p style="margin:0 0 4px"><span class="badge gold">${esc(x.subject)}</span> ${x.topic ? `<span class="badge">${esc(x.topic)}</span> ` : ''}<span class="mute">${fsize(x.file_size)}</span></p>
+      <h3 style="margin:.3em 0">${esc(x.title)}</h3>${x.description ? `<p class="mute" style="margin:0 0 8px">${esc(x.description)}</p>` : ''}
+      <button data-p="${x.id}">📖 Read passage</button></div>`).join('') || `<p class="mute">${data.length ? 'Nothing matches your search.' : 'No passages have been posted for your class yet.'}</p>`;
+    $$('[data-p]', $('#plist')).forEach(b => b.onclick = () => { const x = data.find(v => v.id === b.dataset.p); openPassage({ path: x.file_path, title: x.title }); });
+  };
+  $('#psr').oninput = draw; $('#psf').onchange = draw; draw();
 }

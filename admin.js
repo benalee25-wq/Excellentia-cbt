@@ -36,7 +36,7 @@ function go(t, pop) {
   tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   if (!pop && hist[hist.length - 1] !== t) { hist.push(t); history[hist.length === 1 ? 'replaceState' : 'pushState']({ t }, '', '#' + t); }
   $('#bBack').classList.toggle('hide', hist.length < 2);
-  ({ bank, upload, exams, students, results, materials, activity, messages, backup })[t]();
+  ({ bank, upload, exams, students, results, materials, passages, activity, messages, backup })[t]();
 }
 $('#bBack').onclick = () => history.back();
 window.addEventListener('popstate', () => {
@@ -221,7 +221,7 @@ async function exams() {
     const { data: gone, error } = await sb.from('exams').delete().eq('id', x.id).select('id');
     if (error) return toast(friendly(error.message), true);
     if (!gone || !gone.length) return toast('Could not delete it. Refresh and try again.', true);
-    if (x.passage_path) await sb.storage.from('exam-passages').remove([x.passage_path]);
+    await removeFileIfUnused(x.passage_path);
     toast('Deleted'); exams();
   });
 }
@@ -250,7 +250,8 @@ function setDt(id, m, d) {
   set('d', d.getDate()); set('m', d.getMonth() + 1); set('y', d.getFullYear()); set('h', d.getHours() % 12 || 12); set('n', d.getMinutes()); set('a', d.getHours() >= 12 ? 'PM' : 'AM');
 }
 const dtBtns = (id, extra) => `<div class="row" style="gap:6px;margin-top:6px">${extra}<button type="button" class="alt sm" id="${id}Clr">Clear</button></div>`;
-function eForm(x = {}) {
+async function eForm(x = {}) {
+  const { data: lib } = await sb.from('passages').select('id,title,class_level,file_path,file_name').order('title').limit(300);   // may not exist yet
   const m = modal(`<h2>${x.id ? 'Edit' : 'Create'} exam</h2>
   <label>Title</label><input id="et" value="${esc(x.title)}">
   <div class="row"><div><label>Class</label><select id="ec">${opts(CLASSES, x.class_level)}</select></div><div><label>Subject (same spelling as the bank)</label><input id="es" value="${esc(x.subject)}"></div></div>
@@ -265,6 +266,7 @@ function eForm(x = {}) {
   <div class="card" style="margin:10px 0"><b>📖 Reading passage (optional)</b>
     <p class="mute">Upload a PDF that students read on screen while they answer the questions. They can open it only during the exam.</p>
     <input id="epf" type="file" accept=".pdf,application/pdf">
+    <label>Or use a passage from the Passages library</label><select id="epl"><option value="">${x.passage_path ? 'Keep the current one' : 'None'}</option>${(lib || []).map(p => `<option value="${p.id}" ${x.passage_path && x.passage_path === p.file_path ? 'selected' : ''}>${esc(p.title)} (${esc(clsName(p.class_level))})</option>`).join('')}</select>
     <label>Passage title (optional)</label><input id="ept" value="${esc(x.passage_title)}" placeholder="e.g. The Lost Boy">
     ${x.passage_path ? `<p class="mute">Current file: ${esc(x.passage_name || 'passage.pdf')}. Choosing a new file replaces it.</p><label><input type="checkbox" id="epr" style="width:auto;min-height:0"> Remove the current passage</label>` : ''}
     <label><input type="checkbox" id="ekeep" style="width:auto;min-height:0" ${x.keep_order ? 'checked' : ''}> Keep the questions in the order they were uploaded (do not shuffle)</label>
@@ -316,10 +318,11 @@ function eForm(x = {}) {
       if (ue) return toast('Upload failed: ' + ue.message, true);
       up = path; Object.assign(r, { passage_path: path, passage_name: pf.name });
     } else if (rmP) Object.assign(r, { passage_path: null, passage_name: null });
+    else if ($('#epl', m).value) { const lp = (lib || []).find(p => p.id === $('#epl', m).value); if (lp) Object.assign(r, { passage_path: lp.file_path, passage_name: lp.file_name || 'passage.pdf' }); }
     r.passage_title = $('#ept', m).value.trim() || null; r.keep_order = $('#ekeep', m).checked;
     const { error } = x.id ? await sb.from('exams').update(r).eq('id', x.id) : await sb.from('exams').insert(r);
     if (error) { if (up) await sb.storage.from('exam-passages').remove([up]); return toast(friendly(error.message), true); }
-    if (x.passage_path && (up || rmP) && x.passage_path !== up) await sb.storage.from('exam-passages').remove([x.passage_path]);
+    if (x.passage_path && 'passage_path' in r && r.passage_path !== x.passage_path) await removeFileIfUnused(x.passage_path);
     m.remove(); toast('Exam saved'); exams();
   });
 }
@@ -781,4 +784,75 @@ async function backup() {
     msg.innerHTML = `Done. Saved ${Object.values(counts).reduce((a, b) => a + b, 0)} rows from ${Object.keys(counts).length} tables.${notes.length ? `<br><span class="err">${notes.map(esc).join('<br>')}</span>` : ''}<br>Now move the file somewhere safe.`;
   });
   $('#bkJson').onclick = () => go('json'); $('#bkXlsx').onclick = () => go('xlsx');
+}
+
+
+// ================= PASSAGES LIBRARY =================
+async function removeFileIfUnused(path) {   // a passage file can be used by a library item and by exams; delete it only when nothing uses it
+  if (!path) return;
+  const [a, b] = await Promise.all([sb.from('exams').select('id', { count: 'exact', head: true }).eq('passage_path', path), sb.from('passages').select('id', { count: 'exact', head: true }).eq('file_path', path)]);
+  if ((a.count || 0) + (b.count || 0) === 0) await sb.storage.from('exam-passages').remove([path]);
+}
+async function passages() {
+  $('#main').innerHTML = `<div class="card"><p class="mute">Passages here are for students to <b>read and study any time</b> (tap 📖 Passages on their dashboard). You can also attach one to an exam.</p><div class="row">
+    <div><label>Class</label><select id="pgC"><option value="">Any</option>${['All', ...CLASSES].map(c => `<option value="${c}">${clsName(c)}</option>`).join('')}</select></div>
+    <div><label>Subject</label><input id="pgS" placeholder="e.g. English Language"></div></div>
+    <div class="row" style="margin-top:10px"><button id="pgFind">Search</button><button class="gold" id="pgAdd">+ Add passage</button></div></div><div id="pgList"></div>`;
+  $('#pgFind').onclick = loadPassages; $('#pgAdd').onclick = () => pForm(); loadPassages();
+}
+async function loadPassages() {
+  let q = sb.from('passages').select('*').order('created_at', { ascending: false }).limit(300);
+  if ($('#pgC').value) q = q.eq('class_level', $('#pgC').value);
+  if ($('#pgS').value.trim()) q = q.ilike('subject', '%' + $('#pgS').value.trim() + '%');
+  const { data, error } = await q; if (error) return toast(friendly(error.message), true);
+  $('#pgList').innerHTML = `<p class="mute">${data.length} passage(s)</p>` + (data.map(x => `<div class="card">
+    <span class="badge gold">📖 ${esc(x.subject)}</span> <span class="badge">${esc(clsName(x.class_level))}</span> ${x.topic ? `<span class="badge">${esc(x.topic)}</span> ` : ''}${x.published ? '' : '<span class="badge bad">Hidden</span> '}
+    <h3 style="margin:.4em 0 .2em">${esc(x.title)}</h3>
+    <p class="mute" style="margin:0 0 8px">${x.description ? esc(x.description) + '<br>' : ''}${esc(x.file_name || '')} · ${fsize(x.file_size)}</p>
+    <button class="alt sm" data-v="${x.id}">Preview</button> <button class="alt sm" data-e="${x.id}">Edit</button> <button class="alt sm" data-d="${x.id}">Delete</button></div>`).join('')
+    || '<div class="card">No passages yet. Tap “+ Add passage”.</div>');
+  $$('[data-v]').forEach(b => b.onclick = () => { const x = data.find(v => v.id === b.dataset.v); openPassage({ path: x.file_path, title: x.title }); });
+  $$('[data-e]').forEach(b => b.onclick = () => pForm(data.find(x => x.id === b.dataset.e)));
+  $$('[data-d]').forEach(b => b.onclick = async () => {
+    const x = data.find(v => v.id === b.dataset.d);
+    if (!(await askYes('Delete this passage?', `“${x.title}”\n\nStudents will no longer be able to read it. Exams that use this passage keep their copy. This cannot be undone.`, 'Yes, delete', 'Keep it'))) return;
+    run(b, async () => {
+      const { data: gone, error } = await sb.from('passages').delete().eq('id', x.id).select('id');
+      if (error) return toast(friendly(error.message), true);
+      if (!gone || !gone.length) return toast('Could not delete it. Refresh and try again.', true);
+      await removeFileIfUnused(x.file_path); toast('Deleted'); loadPassages();
+    });
+  });
+}
+async function pForm(x = {}) {
+  const { data: sj } = await sb.from('passages').select('subject').limit(1000), subs = [...new Set((sj || []).map(r => r.subject))].sort();
+  const m = modal(`<h2>${x.id ? 'Edit' : 'Add'} passage</h2>
+  <div class="row"><div><label>Class</label><select id="pfC">${['All', ...CLASSES].map(c => `<option value="${c}" ${c === (x.class_level || 'All') ? 'selected' : ''}>${clsName(c)}</option>`).join('')}</select></div>
+  <div><label>Subject</label><input id="pfS" list="pfSl" value="${esc(x.subject)}"><datalist id="pfSl">${subs.map(v => `<option value="${esc(v)}">`).join('')}</datalist></div></div>
+  <label>Topic (use the same words as the Topic of its questions)</label><input id="pfT" value="${esc(x.topic)}" placeholder="e.g. The Lost Boy">
+  <label>Title</label><input id="pfN" value="${esc(x.title)}" placeholder="e.g. Reading comprehension: The Lost Boy">
+  <label>Short description (optional)</label><textarea id="pfD" rows="2">${esc(x.description)}</textarea>
+  <label>PDF file (max 20 MB)${x.id ? '. Leave empty to keep the current file' : ''}</label><input id="pfF" type="file" accept=".pdf,application/pdf">
+  ${x.id ? `<p class="mute">Current file: ${esc(x.file_name || 'passage.pdf')}</p>` : ''}
+  <label>Visible to students?</label><select id="pfV"><option value="yes" ${x.published === false ? '' : 'selected'}>Yes, show now</option><option value="no" ${x.published === false ? 'selected' : ''}>No, keep hidden</option></select>
+  <div class="row" style="margin-top:12px"><button id="pfSave">Save</button><button class="alt" id="pfX">Cancel</button></div>`);
+  $('#pfX', m).onclick = () => m.remove();
+  $('#pfSave', m).onclick = e => run(e.target, async () => {
+    const r = { class_level: $('#pfC', m).value, subject: $('#pfS', m).value.trim(), topic: $('#pfT', m).value.trim(), title: $('#pfN', m).value.trim(), description: $('#pfD', m).value.trim() || null, published: $('#pfV', m).value === 'yes' };
+    if (!r.subject || !r.title) return toast('Title and subject are required.', true);
+    const f = $('#pfF', m).files[0]; let up = null;
+    if (!x.id && !f) return toast('Choose the PDF file.', true);
+    if (f) {
+      if (!/\.pdf$/i.test(f.name)) return toast('The passage must be a PDF file.', true);
+      if (f.size > 20 * 1048576) return toast(`That PDF is ${fsize(f.size)}. The limit is 20 MB. Compress it or remove large pictures.`, true);
+      if ((await f.slice(0, 5).text()) !== '%PDF-') return toast('That file is not a real PDF.', true);
+      const path = crypto.randomUUID() + '.pdf', { error: ue } = await sb.storage.from('exam-passages').upload(path, f, { contentType: 'application/pdf' });
+      if (ue) return toast('Upload failed: ' + ue.message, true);
+      up = path; Object.assign(r, { file_path: path, file_name: f.name, file_size: f.size });
+    }
+    const { error } = x.id ? await sb.from('passages').update(r).eq('id', x.id) : await sb.from('passages').insert(r);
+    if (error) { if (up) await sb.storage.from('exam-passages').remove([up]); return toast(friendly(error.message), true); }
+    if (x.file_path && up) await removeFileIfUnused(x.file_path);
+    m.remove(); toast('Saved'); loadPassages();
+  });
 }

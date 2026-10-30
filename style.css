@@ -87,3 +87,13 @@ html[data-theme=dark]{--bg:#101a15;--card:#18251e;--ink:#eaf1ec;--mute:#9db0a5;-
 
 .card{box-shadow:0 1px 4px rgba(0,0,0,.14)}html[data-theme=dark] .card{box-shadow:none}
 @media print{.card,input,select,textarea,.modal>div{background:#fff!important;box-shadow:none!important}}
+
+/* ===== Reading passage viewer ===== */
+.psg{position:fixed;inset:0;z-index:30;background:var(--bg);display:flex;flex-direction:column;user-select:none;-webkit-user-select:none}
+.psg.dock{inset:0 auto 0 0;width:55%;border-right:2px solid var(--line);box-shadow:2px 0 10px rgba(0,0,0,.18)}
+.psghead{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border-bottom:1px solid var(--line)}
+.psghead b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.psghead button{flex:none;min-width:44px}
+.psgbody{flex:1;overflow:auto;padding:8px;-webkit-overflow-scrolling:touch}
+.psgpage{display:block;margin:0 auto 10px;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.28);max-width:none}
+body.psgdock{padding-left:55%}

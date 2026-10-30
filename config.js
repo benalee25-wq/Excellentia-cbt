@@ -188,3 +188,56 @@ function startPresence() {
   document.addEventListener('visibilitychange', presenceOnVis); addEventListener('pagehide', presenceOnHide);
 }
 async function signOutLogged() { stopPresence(); try { await sb.rpc('log_signout'); } catch (e) {} await sb.auth.signOut(); }
+
+// ===== Reading passage viewer (PDF drawn page by page, so it works on every phone) =====
+const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+let psgEl = null, psgTok = 0, psgTimer = null; const psgBytes = {};
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  return new Promise((ok, no) => {
+    const s = document.createElement('script'); s.src = PDFJS;
+    s.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; ok(window.pdfjsLib); };
+    s.onerror = () => no(new Error('The reader could not be loaded.')); document.head.append(s);
+  });
+}
+function closePassage() {
+  psgTok++; clearInterval(psgTimer); psgTimer = null;
+  if (psgEl) { psgEl.remove(); psgEl = null; } document.body.classList.remove('psgdock');
+}
+async function openPassage(o) {   // o = { path, title }
+  closePassage(); const my = ++psgTok, wide = matchMedia('(min-width:1000px)').matches;
+  const d = psgEl = document.createElement('div'); d.className = 'psg' + (wide ? ' dock' : '');
+  d.innerHTML = `<div class="psghead"><b>📖 ${esc(o.title || 'Reading passage')}</b><span class="timer" id="psgTm" style="flex:none;min-width:0"></span><button class="alt sm" id="psgZm" aria-label="Smaller">−</button><button class="alt sm" id="psgZp" aria-label="Bigger">+</button><button class="sm" id="psgX">Close ✕</button></div><div class="psgbody" id="psgBody"><p class="mute">Loading the passage…</p></div>`;
+  document.body.append(d); if (wide) document.body.classList.add('psgdock');
+  const body = $('#psgBody', d); let zoom = 1, pdf = null, rt = null;
+  $('#psgX', d).onclick = closePassage;
+  psgTimer = setInterval(() => { const t = $('#tm'), p = $('#psgTm'); if (t && p) p.textContent = t.textContent; }, 1000);   // keep the exam clock in view
+  const draw = async () => {
+    const stamp = ++psgTok;   // a newer draw (after zoom) cancels an older one
+    body.replaceChildren(); const w = Math.max(240, body.clientWidth - 16), dpr = Math.min(window.devicePixelRatio || 1, 2);
+    for (let i = 1; i <= pdf.numPages; i++) {
+      if (!psgEl || stamp !== psgTok) return;
+      const pg = await pdf.getPage(i), sc = (w / pg.getViewport({ scale: 1 }).width) * zoom, vp = pg.getViewport({ scale: sc * dpr });
+      const c = document.createElement('canvas'); c.className = 'psgpage'; c.width = vp.width; c.height = vp.height;
+      c.style.width = vp.width / dpr + 'px'; c.style.height = vp.height / dpr + 'px'; body.append(c);
+      await pg.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    }
+  };
+  const zoomTo = z => { zoom = Math.min(3, Math.max(0.6, z)); clearTimeout(rt); rt = setTimeout(() => { if (pdf && psgEl) draw(); }, 200); };
+  $('#psgZm', d).onclick = () => zoomTo(zoom - 0.25); $('#psgZp', d).onclick = () => zoomTo(zoom + 0.25);
+  try {
+    let bytes = psgBytes[o.path];
+    if (!bytes) {
+      const { data, error } = await sb.storage.from('exam-passages').createSignedUrl(o.path, 3600);
+      if (error) throw new Error('You cannot open this passage right now.');
+      const r = await fetch(data.signedUrl); if (!r.ok) throw new Error('The passage could not be downloaded.');
+      bytes = psgBytes[o.path] = await r.arrayBuffer();   // kept in memory, so it still opens if the link expires
+    }
+    const lib = await loadPdfJs();
+    pdf = await lib.getDocument({ data: bytes.slice(0), isEvalSupported: false, useSystemFonts: true }).promise;
+    if (!psgEl || my > psgTok) return; await draw();
+  } catch (e) {
+    if (psgEl) body.innerHTML = `<p class="err">${esc(e.message || 'The passage could not be shown.')}</p><button id="psgRe">Try again</button>`;
+    const re = $('#psgRe', d); if (re) re.onclick = () => openPassage(o);
+  }
+}

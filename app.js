@@ -42,6 +42,7 @@ async function boot(fresh) {
 
 // ---------- dashboard ----------
 async function dash() {
+  closePassage();
   await sb.rpc('finalize_mine');   // an exam whose time ran out is marked now, with the answers already saved
   $('#main').innerHTML = '<p class="mute">Loading exams…</p>';
   const { data, error } = await sb.rpc('list_exams');
@@ -118,6 +119,7 @@ async function begin(btn, id, needCode) {
     ex.qs = data.questions;
     ex.shuf = ex.qs.map(q => seeded(ex.attempt_id + q.id)); // per-student option order
     renderExam(); startTimer();
+    if (ex.passage_path) openPassage({ path: ex.passage_path, title: ex.passage_title || ex.title });   // the passage opens first
   });
 }
 function seeded(seed) {      // deterministic shuffle of ['a','b','c','d'] by seed
@@ -129,7 +131,7 @@ function renderExam() {
   const q = ex.qs[ex.cur], L = ['A', 'B', 'C', 'D'];
   const opts = ex.shuf[ex.cur].filter(k => q[k]);
   $('#main').innerHTML = `
-  <div class="card" style="position:sticky;top:58px;z-index:4"><div class="row" style="align-items:center"><b>${esc(ex.title)}</b><span class="timer" id="tm" style="flex:none;min-width:0"></span></div></div>
+  <div class="card" style="position:sticky;top:58px;z-index:4"><div class="row" style="align-items:center"><b>${esc(ex.title)}</b>${ex.passage_path ? '<button class="alt sm" id="bPsg" style="flex:none">📖 Passage</button>' : ''}<span class="timer" id="tm" style="flex:none;min-width:0"></span></div></div>
   <div class="card">
     <p class="mute">Question ${ex.cur + 1} of ${ex.qs.length} · ${q.marks} mark${q.marks > 1 ? 's' : ''}</p>
     ${q.image ? `<img class="qimg" src="${esc(q.image)}" alt="Diagram for question ${ex.cur + 1}">` : ''}
@@ -142,6 +144,7 @@ function renderExam() {
   <div class="card"><h3>Questions <span class="mute" id="cnt"></span></h3><div class="nav">${ex.qs.map((x, i) => `<button data-i="${i}" class="${ex.ans[x.id] ? 'done' : ''} ${ex.flags.has(x.id) ? 'flag' : ''} ${i === ex.cur ? 'cur' : ''}">${i + 1}</button>`).join('')}</div>
   <p class="mute">Green = answered · Gold ring = flagged · Plain = not answered</p></div>`;
   $('#cnt').textContent = `(${Object.keys(ex.ans).length} of ${ex.qs.length} answered)`;
+  if ($('#bPsg')) $('#bPsg').onclick = () => openPassage({ path: ex.passage_path, title: ex.passage_title || ex.title });
   $$('.opt').forEach(b => b.onclick = () => { ex.ans[q.id] = b.dataset.k; persist(); renderExam(); });
   $('#bFlag').onclick = () => { ex.flags.has(q.id) ? ex.flags.delete(q.id) : ex.flags.add(q.id); persist(); renderExam(); };
   $('#bPrev').onclick = () => { ex.cur--; renderExam(); scrollTo(0, 0); };
@@ -161,7 +164,7 @@ async function sync() {
   const { error } = await sb.rpc('save_progress', { aid: ex.attempt_id, ans: ex.ans, flg: [...ex.flags], tabs: ex.tabs, tok: tok() });
   if (error) { if (/SESSION_REPLACED/.test(error.message)) kicked(); else { toast('Offline — answers saved on this phone, retrying…', true); setTimeout(sync, 5000); } }
 }
-function kicked() { clearInterval(tick); stopPresence(); ex = null; sb.auth.signOut().then(() => { show('vLogin'); $('#lerr').textContent = 'You signed in on another device, so this session ended. Sign in again, tap Resume exam, then submit.'; }); }
+function kicked() { clearInterval(tick); stopPresence(); closePassage(); ex = null; sb.auth.signOut().then(() => { show('vLogin'); $('#lerr').textContent = 'You signed in on another device, so this session ended. Sign in again, tap Resume exam, then submit.'; }); }
 function startTimer() { clearInterval(tick); tick = setInterval(tickUI, 1000); }
 function tickUI() {
   if (!ex) return;
@@ -189,6 +192,7 @@ async function submit(auto) {
   $('#bRetry').onclick = () => { ex.submitting = false; submit(auto); };
 }
 function showScore(data, auto, aid) {
+  closePassage();
   localStorage.removeItem('cbt-' + aid); ex = null;
   $('#main').innerHTML = `<div class="card"><p class="mute" style="text-align:center">${auto ? 'Time ran out — your exam was submitted.' : 'Exam submitted.'}</p>
    <p class="score">${data.score}/${data.total}</p><p style="text-align:center;font-size:1.3rem">${data.percent}% · <span class="badge ${data.passed ? 'ok' : 'bad'}">${data.passed ? 'Passed' : 'Not passed'}</span></p>

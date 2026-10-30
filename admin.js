@@ -206,15 +206,24 @@ function preview() {
 async function exams() {
   const { data, error } = await sb.from('exams').select('*').order('created_at', { ascending: false });
   if (error) return toast(friendly(error.message), true);
-  $('#main').innerHTML = `<button class="gold" id="bNew">+ Create exam</button><div style="margin-top:12px">` + (data.map(x => `<div class="card"><h3>${esc(x.title)} <span class="badge ${x.published ? 'ok' : ''}">${x.published ? 'Published' : 'Draft'}</span></h3>
+  $('#main').innerHTML = `<button class="gold" id="bNew">+ Create exam</button><div style="margin-top:12px">` + (data.map(x => `<div class="card"><h3>${esc(x.title)} <span class="badge ${x.published ? 'ok' : ''}">${x.published ? 'Published' : 'Draft'}</span>${x.passage_path ? ' <span class="badge gold">📖 Passage</span>' : ''}</h3>
    <p class="mute">${esc(x.class_level)} · ${esc(x.subject)}${x.term ? ' · ' + esc(x.term) : ''} · ${x.duration_min} min · ${x.question_ids ? x.question_ids.length + ' chosen' : x.num_questions + ' random'} questions · pass ${x.pass_mark}%${x.access_code ? ' · code ' + esc(x.access_code) : ''}<br>${x.start_at ? new Date(x.start_at).toLocaleString() : 'Open now'} → ${x.end_at ? new Date(x.end_at).toLocaleString() : 'no end'} · Review: ${x.show_review ? 'on' : 'off'}</p>
-   <button class="sm" data-p="${x.id}">${x.published ? 'Unpublish' : 'Publish'}</button> <button class="alt sm" data-r="${x.id}">${x.show_review ? 'Hide' : 'Allow'} review</button> <button class="alt sm" data-e="${x.id}">Edit</button> <button class="alt sm" data-d="${x.id}">Delete</button></div>`).join('') || '<div class="card">No exams yet.</div>') + '</div>';
+   <button class="sm" data-p="${x.id}">${x.published ? 'Unpublish' : 'Publish'}</button> <button class="alt sm" data-r="${x.id}">${x.show_review ? 'Hide' : 'Allow'} review</button> ${x.passage_path ? `<button class="alt sm" data-pv="${x.id}">📖 Preview passage</button> ` : ''}<button class="alt sm" data-e="${x.id}">Edit</button> <button class="alt sm" data-d="${x.id}">Delete</button></div>`).join('') || '<div class="card">No exams yet.</div>') + '</div>';
   $('#bNew').onclick = () => eForm();
   const upd = (id, v) => sb.from('exams').update(v).eq('id', id).then(({ error }) => error ? toast(friendly(error.message), true) : exams());
   $$('[data-p]').forEach(b => b.onclick = () => upd(b.dataset.p, { published: !data.find(x => x.id === b.dataset.p).published }));
   $$('[data-r]').forEach(b => b.onclick = () => upd(b.dataset.r, { show_review: !data.find(x => x.id === b.dataset.r).show_review }));
   $$('[data-e]').forEach(b => b.onclick = () => eForm(data.find(x => x.id === b.dataset.e)));
-  $$('[data-d]').forEach(b => b.onclick = () => confirm('Delete this exam and ALL its student results?') && sb.from('exams').delete().eq('id', b.dataset.d).then(({ error }) => error ? toast(friendly(error.message), true) : exams()));
+  $$('[data-pv]').forEach(b => b.onclick = () => { const x = data.find(v => v.id === b.dataset.pv); openPassage({ path: x.passage_path, title: x.passage_title || x.title }); });
+  $$('[data-d]').forEach(b => b.onclick = async () => {
+    const x = data.find(v => v.id === b.dataset.d);
+    if (!(await askYes('Delete this exam?', `“${x.title}”\n\nAll student results for this exam are deleted too. This cannot be undone.`, 'Yes, delete', 'Keep it'))) return;
+    const { data: gone, error } = await sb.from('exams').delete().eq('id', x.id).select('id');
+    if (error) return toast(friendly(error.message), true);
+    if (!gone || !gone.length) return toast('Could not delete it. Refresh and try again.', true);
+    if (x.passage_path) await sb.storage.from('exam-passages').remove([x.passage_path]);
+    toast('Deleted'); exams();
+  });
 }
 
 // ---- Date and time pickers made of simple drop-down lists (they work on every phone) ----
@@ -253,6 +262,13 @@ function eForm(x = {}) {
   <div class="row"><div><label>Access code (optional)</label><input id="eac" value="${esc(x.access_code)}"></div><div><label>Question source</label><select id="emode"><option value="r">Random from bank</option><option value="m" ${x.question_ids ? 'selected' : ''}>Pick manually</option></select></div></div>
   <div id="rnd" class="row"><div><label>Number of questions</label><input id="en" type="number" value="${x.num_questions || 20}"></div><div><label>Only this topic (optional)</label><input id="etp" value="${esc(x.topic_filter)}"></div></div>
   <div id="man" class="hide"><p id="mc" class="mute"></p><div id="mlist" class="scroll" style="max-height:240px"></div></div>
+  <div class="card" style="margin:10px 0"><b>📖 Reading passage (optional)</b>
+    <p class="mute">Upload a PDF that students read on screen while they answer the questions. They can open it only during the exam.</p>
+    <input id="epf" type="file" accept=".pdf,application/pdf">
+    <label>Passage title (optional)</label><input id="ept" value="${esc(x.passage_title)}" placeholder="e.g. The Lost Boy">
+    ${x.passage_path ? `<p class="mute">Current file: ${esc(x.passage_name || 'passage.pdf')}. Choosing a new file replaces it.</p><label><input type="checkbox" id="epr" style="width:auto;min-height:0"> Remove the current passage</label>` : ''}
+    <label><input type="checkbox" id="ekeep" style="width:auto;min-height:0" ${x.keep_order ? 'checked' : ''}> Keep the questions in the order they were uploaded (do not shuffle)</label>
+    <p class="mute">For a 50-question passage exam: upload your 50 questions in order with the Topic set to the passage name. Then set "Question source" to Random from bank, "Only this topic" to that name, and "Number of questions" to 50.</p></div>
   <label>Instructions</label><textarea id="ei" rows="3">${esc(x.instructions)}</textarea>
   <label><input type="checkbox" id="erv" style="width:auto;min-height:0" ${x.show_review ? 'checked' : ''}> Let students review answers after submitting</label>
   <label><input type="checkbox" id="epb" style="width:auto;min-height:0" ${x.published ? 'checked' : ''}> Publish now</label>
@@ -291,8 +307,20 @@ function eForm(x = {}) {
       const { count } = await q;
       if (count !== null && count < r.num_questions * 1.3 && !confirm(`Only ${count} question(s) in the bank for ${r.class_level} ${r.subject}. Students will see almost the same questions, so answers can be shared. Save anyway?`)) return;
     }
+    const pf = $('#epf', m).files[0], rmP = $('#epr', m) && $('#epr', m).checked; let up = null;
+    if (pf) {
+      if (!/\.pdf$/i.test(pf.name)) return toast('The passage must be a PDF file.', true);
+      if (pf.size > 20 * 1048576) return toast(`That PDF is ${fsize(pf.size)}. The limit is 20 MB. Compress it or remove large pictures.`, true);
+      if ((await pf.slice(0, 5).text()) !== '%PDF-') return toast('That file is not a real PDF.', true);
+      const path = crypto.randomUUID() + '.pdf', { error: ue } = await sb.storage.from('exam-passages').upload(path, pf, { contentType: 'application/pdf' });
+      if (ue) return toast('Upload failed: ' + ue.message, true);
+      up = path; Object.assign(r, { passage_path: path, passage_name: pf.name });
+    } else if (rmP) Object.assign(r, { passage_path: null, passage_name: null });
+    r.passage_title = $('#ept', m).value.trim() || null; r.keep_order = $('#ekeep', m).checked;
     const { error } = x.id ? await sb.from('exams').update(r).eq('id', x.id) : await sb.from('exams').insert(r);
-    if (error) return toast(friendly(error.message), true); m.remove(); toast('Exam saved'); exams();
+    if (error) { if (up) await sb.storage.from('exam-passages').remove([up]); return toast(friendly(error.message), true); }
+    if (x.passage_path && (up || rmP) && x.passage_path !== up) await sb.storage.from('exam-passages').remove([x.passage_path]);
+    m.remove(); toast('Exam saved'); exams();
   });
 }
 

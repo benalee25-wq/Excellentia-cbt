@@ -489,14 +489,25 @@ async function showResults(ex) {
   let pos = 0, last = null; rows.forEach((r, i) => { if (r.pct !== last) { pos = i + 1; last = r.pct; } r.pos = pos; r.pass = r.pct >= ex.pass_mark; });
   const n = rows.length, avg = n ? (rows.reduce((s, r) => s + r.pct, 0) / n).toFixed(1) : 0;
   $('#rOut').innerHTML = n ? `<div class="card"><div class="row"><div><b>${n}</b><br><span class="mute">Submitted</span></div><div><b>${avg}%</b><br><span class="mute">Average</span></div><div><b>${rows[0].pct}%</b><br><span class="mute">Highest</span></div><div><b>${rows[n - 1].pct}%</b><br><span class="mute">Lowest</span></div><div><b>${Math.round(rows.filter(r => r.pass).length / n * 100)}%</b><br><span class="mute">Pass rate</span></div></div>
-  <div class="row" style="margin-top:10px"><button id="rX">Export Excel</button><button class="alt" id="rP">Print / save as PDF</button><button class="alt" id="rS">Print result slips</button></div></div>
-  <div class="card scroll"><table><tr><th>Pos</th><th>Name</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th><th>Tab exits</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}<br><span class="mute">${esc(classLabel({ class_level: ex.class_level, section: r.profiles?.section }))}</span></td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td><span class="badge ${r.pass ? 'ok' : 'bad'}">${r.pass ? 'Pass' : 'Fail'}</span></td><td>${r.tab_switches || 0}</td></tr>`).join('')}</table></div><div id="qa"></div>` : '<div class="card">No submissions yet for this exam.</div>';
+  <div class="row" style="margin-top:10px"><button id="rX">Export Excel</button><button class="alt" id="rM">🔄 Re-mark exam</button><button class="alt" id="rP">Print / save as PDF</button><button class="alt" id="rS">Print result slips</button></div></div>
+  <div class="card scroll"><table><tr><th>Pos</th><th>Name</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th><th>Tab exits</th><th></th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}<br><span class="mute">${esc(classLabel({ class_level: ex.class_level, section: r.profiles?.section }))}</span></td><td>${r.score}/${r.total}${r.original_score != null ? `<br><span class="mute">corrected (was ${r.original_score})</span>` : ''}${r.remarked_from != null ? `<br><span class="mute">re-marked (was ${r.remarked_from})</span>` : ''}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td><span class="badge ${r.pass ? 'ok' : 'bad'}">${r.pass ? 'Pass' : 'Fail'}</span></td><td>${r.tab_switches || 0}</td><td><button class="alt sm" data-sc="${r.id}">✏️ Edit score</button></td></tr>`).join('')}</table></div><div id="qa"></div>` : '<div class="card">No submissions yet for this exam.</div>';
   await loadPending(ex, n);
+  $$('[data-sc]').forEach(b => b.onclick = () => scoreForm(rows.find(r => r.id === b.dataset.sc), ex));
   if (!n) return;
-  const sheet = rows.map(r => ({ Position: r.pos, Username: safeCell(r.profiles?.username), Name: safeCell(r.profiles?.full_name), Class: ex.class_level, Section: safeCell(r.profiles?.section || ''), Subject: ex.subject, Term: ex.term, Score: r.score, Total: r.total, Percent: r.pct, Grade: grade(r.pct), Result: r.pass ? 'Pass' : 'Fail', 'Tab exits': r.tab_switches || 0 }));
+  const sheet = rows.map(r => ({ Position: r.pos, Username: safeCell(r.profiles?.username), Name: safeCell(r.profiles?.full_name), Class: ex.class_level, Section: safeCell(r.profiles?.section || ''), Subject: ex.subject, Term: ex.term, Score: r.score, Total: r.total, Percent: r.pct, Grade: grade(r.pct), Result: r.pass ? 'Pass' : 'Fail', 'Tab exits': r.tab_switches || 0, 'Score corrected': r.original_score != null ? 'Yes (was ' + r.original_score + ')' : '', 'Re-marked from': r.remarked_from != null ? r.remarked_from : '' }));
   $('#rX').onclick = () => { const when = nowStr(), wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet.map(r => ({ ...r, 'Date downloaded': when }))), 'Results'); XLSX.writeFile(wb, `${ex.title}-results-${dayStr()}.xlsx`); };
   $('#rP').onclick = () => printOut(`<h2>${esc(CFG.SCHOOL)}</h2><h3>${esc(ex.title)} — ${esc(ex.class_level)} ${esc(ex.subject)} ${esc(ex.term || '')}</h3><p>Class average ${avg}% · Highest ${rows[0].pct}% · Lowest ${rows[n - 1].pct}%<br><b>Date printed:</b> ${esc(nowStr())}</p><table><tr><th>Pos</th><th>Name</th><th>Section</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}</td><td>${esc(r.profiles?.section || '')}</td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td>${r.pass ? 'Pass' : 'Fail'}</td></tr>`).join('')}</table>`);
   $('#rS').onclick = () => { const when = nowStr(); printOut(rows.map(r => `<div class="slip"><h2 style="text-align:center">${esc(CFG.SCHOOL)}</h2><h3 style="text-align:center">Result slip</h3><p><b>Student:</b> ${esc(r.profiles?.full_name)} (${esc(r.profiles?.username)})<br><b>Class:</b> ${esc(classLabel({ class_level: ex.class_level, section: r.profiles?.section }))}<br><b>Exam:</b> ${esc(ex.title)} — ${esc(ex.subject)} ${esc(ex.term || '')}<br><b>Score:</b> ${r.score}/${r.total} (${r.pct}%)<br><b>Grade:</b> ${grade(r.pct)} · <b>Position:</b> ${r.pos} of ${n} · <b>Remark:</b> ${r.pass ? 'Pass' : 'Fail'}<br><b>Date printed:</b> ${esc(when)}</p><p style="margin-top:30px">Teacher's signature: ____________________</p></div>`).join('')); };
+  $('#rM').onclick = e => run(e.target, async () => {
+    const { data: pre, error } = await sb.rpc('admin_remark_exam', { eid: ex.id, do_apply: false });
+    if (error) return toast(error.message, true);
+    const extra = (pre.skipped_manual ? `\n${pre.skipped_manual} score(s) you corrected by hand stay as they are.` : '') + (pre.skipped_missing ? `\n${pre.skipped_missing} attempt(s) are skipped because some of their questions were deleted.` : '');
+    if (!pre.changed) return toast(`Nothing to change: ${pre.unchanged} score(s) already match the current answers.` + extra.replace(/\n/g, ' '));
+    if (!(await askYes('Re-mark this exam?', `${pre.changed} score(s) will change and ${pre.unchanged} stay the same.${extra}\n\nThe earlier scores are kept on record.`, 'Yes, re-mark', 'Cancel'))) return;
+    const { data: done, error: e2 } = await sb.rpc('admin_remark_exam', { eid: ex.id, do_apply: true });
+    if (e2) return toast(e2.message, true);
+    toast(`${done.changed} score(s) updated`); showResults(ex);
+  });
   // question analysis
   const ids = [...new Set(rows.flatMap(r => r.question_order))];
   const { data: qs } = await sb.from('questions').select('id,question,correct,topic').in('id', ids);
@@ -854,5 +865,33 @@ async function pForm(x = {}) {
     if (error) { if (up) await sb.storage.from('exam-passages').remove([up]); return toast(friendly(error.message), true); }
     if (x.file_path && up) await removeFileIfUnused(x.file_path);
     m.remove(); toast('Saved'); loadPassages();
+  });
+}
+
+
+// ================= CORRECT A SCORE =================
+function scoreForm(r, ex) {
+  if (!r) return;
+  const m = modal(`<h2>Correct a score</h2><p><b>${esc(r.profiles?.full_name || 'Student')}</b><br><span class="mute">${esc(ex.title)}</span></p>
+    <p>Current score: <b>${r.score} / ${r.total}</b>${r.original_score != null ? `<br><span class="mute">The system marked it ${r.original_score}. Corrected${r.score_note ? ': ' + esc(r.score_note) : ''}</span>` : ''}</p>
+    <label>New score (0 to ${r.total})</label><input id="scN" type="number" inputmode="decimal" min="0" max="${r.total}" step="any" value="${r.score}">
+    <label>Reason for the correction (required)</label><textarea id="scR" rows="3" placeholder="e.g. Question 12 had the wrong answer key"></textarea>
+    <p class="mute">The original score is kept, the change is recorded in the audit log, and the student's result changes straight away.</p>
+    <div class="row" style="margin-top:12px"><button id="scS">Save correction</button><button class="alt" id="scX">Cancel</button></div>
+    ${r.original_score != null ? `<button class="alt" id="scU" style="margin-top:8px;width:100%">Restore the original score (${r.original_score})</button>` : ''}`);
+  $('#scX', m).onclick = () => m.remove();
+  $('#scS', m).onclick = e => run(e.target, async () => {
+    const v = parseFloat($('#scN', m).value), note = $('#scR', m).value.trim();
+    if (!isFinite(v) || v < 0 || v > r.total) return toast(`Type a score between 0 and ${r.total}.`, true);
+    if (note.length < 3) return toast('Please write a short reason for the correction.', true);
+    const { error } = await sb.rpc('admin_set_score', { aid: r.id, new_score: v, note });
+    if (error) return toast(error.message, true);
+    m.remove(); toast('Score corrected'); showResults(ex);
+  });
+  const u = $('#scU', m);
+  if (u) u.onclick = e => run(e.target, async () => {
+    const { error } = await sb.rpc('admin_restore_score', { aid: r.id });
+    if (error) return toast(error.message, true);
+    m.remove(); toast('Original score restored'); showResults(ex);
   });
 }

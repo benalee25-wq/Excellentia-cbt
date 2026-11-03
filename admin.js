@@ -36,7 +36,7 @@ function go(t, pop) {
   tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   if (!pop && hist[hist.length - 1] !== t) { hist.push(t); history[hist.length === 1 ? 'replaceState' : 'pushState']({ t }, '', '#' + t); }
   $('#bBack').classList.toggle('hide', hist.length < 2);
-  ({ bank, upload, exams, students, results, materials, passages, activity, messages, backup })[t]();
+  ({ bank, upload, exams, students, results, broadsheet, materials, passages, activity, messages, backup })[t]();
 }
 $('#bBack').onclick = () => history.back();
 window.addEventListener('popstate', () => {
@@ -49,7 +49,7 @@ window.addEventListener('popstate', () => {
 async function bank() {
   $('#main').innerHTML = `<div class="card"><div class="row">
     <div><label>Class</label><select id="fc"><option value="">All</option>${opts(CLASSES)}</select></div>
-    <div><label>Subject</label><input id="fs" placeholder="e.g. Mathematics"></div>
+    <div><label>Subject</label><input id="fs" list="subjAll" placeholder="e.g. Mathematics"><datalist id="subjAll">${SUBJECTS_ALL.map(v => `<option value="${esc(v)}">`).join('')}</datalist></div>
     <div><label>Topic</label><input id="ft"></div>
     <div><label>Difficulty</label><select id="fd"><option value="">All</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div></div>
     <div class="row" style="margin-top:10px"><button id="bFind">Search</button><button class="gold" id="bAdd">+ Add question</button></div></div><div id="chips" style="margin:8px 0"></div><div id="list"></div>`;
@@ -75,10 +75,12 @@ async function loadBank() {
   $$('[data-e]').forEach(b => b.onclick = () => qForm(data.find(x => x.id === b.dataset.e)));
   $$('[data-d]').forEach(b => b.onclick = async () => { if (!confirm('Delete this question?')) return; const { error } = await sb.from('questions').delete().eq('id', b.dataset.d); error ? toast(friendly(error.message), true) : (toast('Deleted'), loadBank()); });
 }
-function modal(html) { const m = document.createElement('div'); m.className = 'modal'; m.innerHTML = '<div>' + html + '</div>'; let down = null; m.onpointerdown = e => { down = e.target; }; m.onclick = e => { if (e.target === m && down === m) m.remove(); }; document.body.append(m); return m; }
+function modal(html) { const m = document.createElement('div'); m.className = 'modal'; m.innerHTML = '<div>' + html + '</div>'; let down = null; m.onpointerdown = e => { down = e.target; }; m.onclick = e => { if (e.target === m && down === m) m.remove(); }; document.body.append(m);
+  $$('select[data-subjof]', m).forEach(s => { const c = $(s.dataset.subjof, m); if (c) c.addEventListener('change', () => { const cur = s.value; s.innerHTML = subjOpts(c.value, subjectsFor(c.value).includes(cur) ? cur : ''); }); });   // subject list follows the class
+  return m; }
 function qForm(x = {}) {
   const m = modal(`<h2>${x.id ? 'Edit' : 'Add'} question</h2>
-  <div class="row"><div><label>Class</label><select id="qc">${opts(CLASSES, x.class_level)}</select></div><div><label>Subject</label><input id="qs" value="${esc(x.subject)}"></div></div>
+  <div class="row"><div><label>Class</label><select id="qc">${opts(CLASSES, x.class_level)}</select></div><div><label>Subject</label><select id="qs" data-subjof="#qc">${subjOpts(x.class_level || CLASSES[0], x.subject)}</select></div></div>
   <label>Topic</label><input id="qt" value="${esc(x.topic)}">
   <label>Question <span class="mute">(use x^2, H_2O, [3/4] for notation)</span></label><textarea id="qq" rows="3">${esc(x.question)}</textarea>
   ${['a', 'b', 'c', 'd'].map(k => `<label>Option ${k.toUpperCase()}</label><input id="o${k}" value="${esc(x['opt_' + k])}">`).join('')}
@@ -107,7 +109,7 @@ let parsed = [];
 function upload() {
   $('#main').innerHTML = `<div class="card"><h2>Add questions</h2>
   <div class="row"><div><label>Class (choose it every time)</label><select id="uc"><option value="">Choose the class…</option>${opts(CLASSES)}</select></div>
-  <div><label>Subject</label><input id="us" value="${esc(store('us'))}" placeholder="e.g. Mathematics"></div>
+  <div><label>Subject</label><select id="us">${subjOpts('', store('us'))}</select></div>
   <div><label>Topic (optional)</label><input id="ut"></div></div>
   <label>Paste your questions here (from Word, PDF or WhatsApp)</label>
   <textarea id="ptxt" rows="9" placeholder="1. What is 2 + 3?&#10;A. 4&#10;B. 5&#10;C. 6&#10;D. 7&#10;Answer: B&#10;&#10;2. Water boils at what temperature?&#10;A. 50&#10;B. 100*&#10;C. 0&#10;D. 10"></textarea>
@@ -118,6 +120,7 @@ function upload() {
   <p class="mute">Show the right answer with a line "Answer: B" under the question, or put * after the correct option. For powers, subscripts and fractions write x^2, H_2O and [3/4].<br>Excel/CSV columns: Question, A, B, C, D, Answer. Optional extra columns: Class, Subject, Topic, Marks, Difficulty, Explanation.</p>
   <button class="alt sm" id="tCsv">CSV template</button> <button class="alt sm" id="tXlsx">Excel template</button></details></div><div id="prev"></div>`;
   const H = ['Question', 'A', 'B', 'C', 'D', 'Answer'], ex = [['What is [1/2] + [1/4]?', '[3/4]', '[2/6]', '[1/8]', '1', 'A']];
+  $('#uc').onchange = () => { const cur = $('#us').value; $('#us').innerHTML = subjOpts($('#uc').value, subjectsFor($('#uc').value).includes(cur) ? cur : ''); };
   $('#tCsv').onclick = () => dl('questions-template.csv', [H, ...ex].map(r => r.map(csvCell).join(',')).join('\n'));
   $('#tXlsx').onclick = () => { const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([H, ...ex]), 'Questions'); XLSX.writeFile(wb, 'questions-template.xlsx'); };
   $('#bRead').onclick = e => run(e.target, async () => {
@@ -172,10 +175,10 @@ function check(o, seen) {
   if (!cls) e.push('Choose the class above (or add a Class column to the file)');
   else if (!CLASSES.includes(cls)) e.push('Class must be one of ' + CLASSES.join(', '));
   else if (chosen && fcls && fcls !== chosen) e.push(`The file says ${fcls} but you chose ${chosen}`);
-  const r = { class_level: cls, subject: String(o.subject || $('#us').value || '').trim(), topic: String(o.topic ?? $('#ut').value ?? '').trim(), question: String(o.question || '').trim(),
+  const r = { class_level: cls, subject: canonSubject(String(o.subject || $('#us').value || ''), cls) || String(o.subject || $('#us').value || '').trim(), topic: String(o.topic ?? $('#ut').value ?? '').trim(), question: String(o.question || '').trim(),
     explanation: String(o.explanation || '').trim() || null, difficulty: ['Easy', 'Medium', 'Hard'].find(d => d.toLowerCase() === String(o.difficulty || 'Medium').trim().toLowerCase()) || 'Medium', marks: parseFloat(o.marks) || 1 };
   L.forEach(k => r['opt_' + k] = String(o['option' + k] ?? o[k] ?? '').trim() || null);
-  if (!r.subject) e.push('Missing subject'); if (!r.question) e.push('Missing question'); if (!r.opt_a || !r.opt_b) e.push('Need at least options A and B');
+  if (!r.subject) e.push('Missing subject'); else if (!canonSubject(r.subject, cls)) e.push(`"${r.subject}" is not one of the school's subjects for ${cls || 'this class'}`); if (!r.question) e.push('Missing question'); if (!r.opt_a || !r.opt_b) e.push('Need at least options A and B');
   const a = String(o.correctanswer ?? o.answer ?? '').trim(); let c = /^\(?[A-Da-d]\)?[.)]?$/.test(a) ? a.replace(/[^A-Da-d]/g, '').toUpperCase() : '';
   if (!c && a) { const i = L.findIndex(k => r['opt_' + k] && r['opt_' + k].toLowerCase() === a.toLowerCase()); c = i >= 0 ? 'ABCD'[i] : ''; }
   r.correct = c; if (!c) e.push('Missing or invalid correct answer'); else if (!r['opt_' + c.toLowerCase()]) e.push('Correct answer points to an empty option');
@@ -254,7 +257,7 @@ async function eForm(x = {}) {
   const { data: lib } = await sb.from('passages').select('id,title,class_level,file_path,file_name').order('title').limit(300);   // may not exist yet
   const m = modal(`<h2>${x.id ? 'Edit' : 'Create'} exam</h2>
   <label>Title</label><input id="et" value="${esc(x.title)}">
-  <div class="row"><div><label>Class</label><select id="ec">${opts(CLASSES, x.class_level)}</select></div><div><label>Subject (same spelling as the bank)</label><input id="es" value="${esc(x.subject)}"></div></div>
+  <div class="row"><div><label>Class</label><select id="ec">${opts(CLASSES, x.class_level)}</select></div><div><label>Subject</label><select id="es" data-subjof="#ec">${subjOpts(x.class_level || CLASSES[0], x.subject)}</select></div></div>
   <div class="row"><div><label>Term</label><select id="etm">${opts(['First Term', 'Second Term', 'Third Term'], x.term)}</select></div><div><label>Duration (minutes)</label><input id="ed" type="number" value="${x.duration_min || 30}"></div>
   <div><label>Pass mark (%)</label><input id="ep" type="number" value="${x.pass_mark ?? 50}"></div></div>
   <div style="margin-top:6px">${dtField('ds', 'Starts (optional)', x.start_at)}${dtBtns('ds', '<button type="button" class="alt sm" id="dsNow">Set to now</button>')}</div>
@@ -588,7 +591,7 @@ async function loadMats() {
 }
 async function mForm(x = {}) {
   const { data: sj } = await sb.from('materials').select('subject').limit(1000);
-  const subs = [...new Set((sj || []).map(r => r.subject))].sort();
+  const subs = [...new Set([...SUBJECTS_ALL, ...(sj || []).map(r => r.subject)])].sort();
   const m = modal(`<h2>${x.id ? 'Edit' : 'Post'} study material</h2>
   <div class="row"><div><label>Class</label><select id="mfC">${['All', ...CLASSES].map(c => `<option value="${c}" ${c === (x.class_level || 'All') ? 'selected' : ''}>${clsName(c)}</option>`).join('')}</select></div>
   <div><label>Subject</label><input id="mfS" list="mfSl" value="${esc(x.subject)}"><datalist id="mfSl">${subs.map(v => `<option value="${esc(v)}">`).join('')}</datalist></div></div>
@@ -836,7 +839,7 @@ async function loadPassages() {
   });
 }
 async function pForm(x = {}) {
-  const { data: sj } = await sb.from('passages').select('subject').limit(1000), subs = [...new Set((sj || []).map(r => r.subject))].sort();
+  const { data: sj } = await sb.from('passages').select('subject').limit(1000), subs = [...new Set([...SUBJECTS_ALL, ...(sj || []).map(r => r.subject)])].sort();
   const m = modal(`<h2>${x.id ? 'Edit' : 'Add'} passage</h2>
   <div class="row"><div><label>Class</label><select id="pfC">${['All', ...CLASSES].map(c => `<option value="${c}" ${c === (x.class_level || 'All') ? 'selected' : ''}>${clsName(c)}</option>`).join('')}</select></div>
   <div><label>Subject</label><input id="pfS" list="pfSl" value="${esc(x.subject)}"><datalist id="pfSl">${subs.map(v => `<option value="${esc(v)}">`).join('')}</datalist></div></div>
@@ -894,4 +897,82 @@ function scoreForm(r, ex) {
     if (error) return toast(error.message, true);
     m.remove(); toast('Original score restored'); showResults(ex);
   });
+}
+
+
+// ================= RESULTS BY SUBJECT: broadsheet and report cards =================
+let bsData = null;
+const shortSub = s => (s.match(/\(([^)]+)\)/) || [])[1] || (s.length > 13 ? s.slice(0, 12) + '…' : s);
+async function broadsheet() {
+  bsData = null;
+  $('#main').innerHTML = `<div class="card"><p class="mute">Every subject's results for a whole class in one table, with each student's <b>total</b>, <b>average</b> and <b>position</b>. Scores are percentages.</p>
+    <div class="row"><div><label>Class</label><select id="bsC"><option value="">Choose the class…</option>${opts(CLASSES)}</select></div>
+    <div><label>Term</label><select id="bsT"><option value="">All terms</option>${opts(['First Term', 'Second Term', 'Third Term'])}</select></div></div>
+    <div class="row"><div><label>Section (optional)</label><input id="bsS" placeholder="e.g. 1E Ruby"></div>
+    <div><label>If a subject has several exams, use</label><select id="bsM"><option value="avg">The average of the exams</option><option value="best">The best exam</option><option value="last">The latest exam</option></select></div></div>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:8px"><input type="checkbox" id="bsZ" style="width:auto;min-height:0"> Count a subject a student did not write as 0 in the average</label>
+    <div class="row" style="margin-top:10px"><button id="bsGo">Show results</button></div>
+    <div class="row" style="margin-top:8px"><button class="alt" id="bsX">Export Excel</button><button class="alt" id="bsP">Print broadsheet</button><button class="alt" id="bsR">Print report cards</button></div></div><div id="bsOut"></div>`;
+  $('#bsGo').onclick = e => run(e.target, loadBroad);
+  $('#bsX').onclick = bsExcel; $('#bsP').onclick = bsPrint; $('#bsR').onclick = bsCards;
+}
+async function loadBroad() {
+  const cls = $('#bsC').value; if (!cls) return toast('Choose the class first.', true);
+  const term = $('#bsT').value, sec = $('#bsS').value.trim().toLowerCase(), method = $('#bsM').value, zero = $('#bsZ').checked, all = [];
+  for (let from = 0; ; from += 1000) {
+    let q = sb.from('attempts').select('id,student_id,score,total,submitted_at,exams!inner(subject,term,class_level),profiles(full_name,username,section)')
+      .eq('exams.class_level', cls).not('submitted_at', 'is', null).order('id').range(from, from + 999);
+    if (term) q = q.eq('exams.term', term);
+    const { data, error } = await q; if (error) return toast(friendly(error.message), true);
+    all.push(...data); if (data.length < 1000) break;
+  }
+  const by = new Map(), subjSet = new Set();
+  all.forEach(a => {
+    if (!a.total) return; const p = a.profiles || {};
+    if (sec && !String(p.section || '').toLowerCase().includes(sec)) return;
+    const sub = a.exams.subject; subjSet.add(sub);
+    let s = by.get(a.student_id); if (!s) by.set(a.student_id, s = { id: a.student_id, name: p.full_name || '?', username: p.username || '', section: p.section || '', ex: {} });
+    (s.ex[sub] = s.ex[sub] || []).push({ pct: a.score / a.total * 100, at: a.submitted_at });
+  });
+  const order = subjectsFor(cls), pos = x => { const i = order.indexOf(x); return i < 0 ? 999 : i; };
+  const subjects = [...subjSet].sort((a, b) => pos(a) - pos(b) || a.localeCompare(b));
+  const pick = l => method === 'best' ? Math.max(...l.map(x => x.pct)) : method === 'last' ? [...l].sort((a, b) => a.at < b.at ? 1 : -1)[0].pct : l.reduce((t, x) => t + x.pct, 0) / l.length;
+  const students = [...by.values()].map(s => {
+    s.subs = {}; let tot = 0, n = 0;
+    subjects.forEach(k => { if (s.ex[k]) { const v = +pick(s.ex[k]).toFixed(1); s.subs[k] = v; tot += v; n++; } });
+    const den = zero ? subjects.length : n; s.total = +tot.toFixed(1); s.n = n; s.avg = den ? +(tot / den).toFixed(1) : 0; return s;
+  }).sort((a, b) => b.avg - a.avg || b.total - a.total || a.name.localeCompare(b.name));
+  students.forEach((s, i) => { s.pos = i && s.avg === students[i - 1].avg && s.total === students[i - 1].total ? students[i - 1].pos : i + 1; });
+  const colAvg = Object.fromEntries(subjects.map(k => { const v = students.filter(s => s.subs[k] != null).map(s => s.subs[k]); return [k, v.length ? +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : '']; }));
+  const classAvg = students.length ? +(students.reduce((t, s) => t + s.avg, 0) / students.length).toFixed(1) : 0;
+  bsData = { cls, term, method, zero, subjects, students, colAvg, classAvg };
+  const note = (method === 'avg' ? 'average of the exams' : method === 'best' ? 'best exam' : 'latest exam') + ' in each subject' + (zero ? '; subjects not written count as 0' : '');
+  $('#bsOut').innerHTML = students.length ? `<div class="card"><p class="mute">${students.length} student(s) · ${subjects.length} subject(s) · ${esc(note)}.</p><div class="scroll"><table>
+    <tr><th>Pos</th><th>Name</th>${subjects.map(k => `<th title="${esc(k)}">${esc(shortSub(k))}</th>`).join('')}<th>Total</th><th>Avg</th></tr>
+    ${students.map(s => `<tr><td>${s.pos}</td><td>${esc(s.name)}<br><span class="mute">${esc(s.section)}</span></td>${subjects.map(k => `<td>${s.subs[k] ?? '–'}</td>`).join('')}<td><b>${s.total}</b></td><td><b>${s.avg}</b></td></tr>`).join('')}
+    <tr><th></th><th>Class average</th>${subjects.map(k => `<th>${colAvg[k] === '' ? '–' : colAvg[k]}</th>`).join('')}<th></th><th>${classAvg}</th></tr></table></div></div>`
+    : '<div class="card">No submitted exams found for these choices.</div>';
+}
+function bsExcel() {
+  const d = bsData; if (!d) return toast('Tap Show results first.', true);
+  const when = nowStr(), sh = d.students.map(s => ({ Position: s.pos, Username: safeCell(s.username), Name: safeCell(s.name), Class: d.cls, Section: safeCell(s.section),
+    ...Object.fromEntries(d.subjects.map(k => [k, s.subs[k] ?? ''])), Total: s.total, Average: s.avg, 'Subjects written': s.n, 'Date downloaded': when }));
+  sh.push({ Name: 'CLASS AVERAGE', ...Object.fromEntries(d.subjects.map(k => [k, d.colAvg[k]])), Average: d.classAvg, 'Date downloaded': when });
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh), 'By subject'); XLSX.writeFile(wb, `results-by-subject-${d.cls}-${dayStr()}.xlsx`);
+}
+function bsPrint() {
+  const d = bsData; if (!d) return toast('Tap Show results first.', true);
+  printOut(`<style>@page{size:landscape}</style><h2>${esc(CFG.SCHOOL)}</h2><h3>Results by subject: ${esc(d.cls)} ${esc(d.term || 'All terms')}</h3><p>Scores are percentages. <b>Date printed:</b> ${esc(nowStr())}</p>
+    <table style="font-size:11px"><tr><th>Pos</th><th>Name</th>${d.subjects.map(k => `<th>${esc(shortSub(k))}</th>`).join('')}<th>Total</th><th>Avg</th></tr>
+    ${d.students.map(s => `<tr><td>${s.pos}</td><td>${esc(s.name)}</td>${d.subjects.map(k => `<td>${s.subs[k] ?? '–'}</td>`).join('')}<td>${s.total}</td><td>${s.avg}</td></tr>`).join('')}
+    <tr><th></th><th>Class average</th>${d.subjects.map(k => `<th>${d.colAvg[k] === '' ? '–' : d.colAvg[k]}</th>`).join('')}<th></th><th>${d.classAvg}</th></tr></table>`);
+}
+function bsCards() {
+  const d = bsData; if (!d) return toast('Tap Show results first.', true);
+  const when = nowStr();
+  printOut(d.students.map((s, i) => `<div class="slip" style="${i < d.students.length - 1 ? 'page-break-after:always;' : ''}page-break-inside:avoid"><h2 style="text-align:center">${esc(CFG.SCHOOL)}</h2><h3 style="text-align:center">Report card</h3>
+    <p><b>Name:</b> ${esc(s.name)}<br><b>Class:</b> ${esc(d.cls)} ${esc(s.section)} · <b>Term:</b> ${esc(d.term || 'All terms')}</p>
+    <table><tr><th>Subject</th><th>Score (%)</th><th>Grade</th></tr>${d.subjects.filter(k => s.subs[k] != null).map(k => `<tr><td>${esc(k)}</td><td>${s.subs[k]}</td><td>${grade(s.subs[k])}</td></tr>`).join('')}</table>
+    <p><b>Total:</b> ${s.total} · <b>Average:</b> ${s.avg}% (${grade(s.avg)}) · <b>Subjects written:</b> ${s.n}<br><b>Position in class:</b> ${s.pos} of ${d.students.length}<br><b>Date printed:</b> ${esc(when)}</p>
+    <p style="margin-top:30px">Teacher's signature: ____________________</p></div>`).join(''));
 }

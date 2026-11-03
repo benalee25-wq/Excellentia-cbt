@@ -241,3 +241,26 @@ async function openPassage(o) {   // o = { path, title }
     const re = $('#psgRe', d); if (re) re.onclick = () => openPassage(o);
   }
 }
+
+// ===== The school's subjects (2026/2027 session) =====
+const SUBJECTS_JSS = ['Mathematics', 'English Language', 'Language', 'Basic Science', 'Basic Technology', 'Agricultural Science', 'Business Studies', 'Social Studies',
+  'Civic / Citizenship and Heritage Studies', 'Christian Religious Studies (CRS)', 'Islamic Religious Studies (IRS)', 'History', 'French', 'Music',
+  'Cultural and Creative Arts (CCA)', 'Physical and Health Education (PHE)', 'Computer Studies', 'Digital Technology (ICT)', 'Home Economics', 'CISCO'];
+const SUBJECTS_SS = ['English Language', 'Mathematics', 'Further Mathematics', 'Biology', 'Chemistry', 'Physics', 'Economics', 'Geography', 'Agricultural Science',
+  'Food and Nutrition', 'Trade (Fashion / Livestock)', 'Citizenship and Heritage Studies', 'Digital Technology (ICT)', 'CISCO'];
+const SUBJECTS_ALL = [...new Set([...SUBJECTS_JSS, ...SUBJECTS_SS])];
+const subjectsFor = c => /^SS/i.test(c || '') ? SUBJECTS_SS : /^JSS/i.test(c || '') ? SUBJECTS_JSS : SUBJECTS_ALL;
+const subjOpts = (cls, cur) => { const l = subjectsFor(cls), all = cur && !l.includes(cur) ? [...l, cur] : l;
+  return '<option value="">Choose subject…</option>' + all.map(s => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join(''); };
+const _sn = s => String(s || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
+const SUBJ_ALIAS = { maths: 'Mathematics', math: 'Mathematics', english: 'English Language', ict: 'Digital Technology (ICT)', 'digital technology': 'Digital Technology (ICT)',
+  crs: 'Christian Religious Studies (CRS)', crk: 'Christian Religious Studies (CRS)', 'christian religious studies': 'Christian Religious Studies (CRS)',
+  irs: 'Islamic Religious Studies (IRS)', irk: 'Islamic Religious Studies (IRS)', 'islamic religious studies': 'Islamic Religious Studies (IRS)',
+  civic: 'Civic / Citizenship and Heritage Studies', 'civic education': 'Civic / Citizenship and Heritage Studies', 'civic citizenship and heritage studies': 'Civic / Citizenship and Heritage Studies',
+  'citizenship and heritage studies': ['Citizenship and Heritage Studies', 'Civic / Citizenship and Heritage Studies'], cca: 'Cultural and Creative Arts (CCA)', 'cultural and creative arts': 'Cultural and Creative Arts (CCA)',
+  phe: 'Physical and Health Education (PHE)', 'physical and health education': 'Physical and Health Education (PHE)', agric: 'Agricultural Science', 'further maths': 'Further Mathematics',
+  'computer science': 'Computer Studies', 'basic sci': 'Basic Science', 'basic tech': 'Basic Technology', 'food nutrition': 'Food and Nutrition', trade: 'Trade (Fashion / Livestock)', 'home economic': 'Home Economics' };
+function canonSubject(s, cls) {   // returns the school's exact spelling, or '' when it is not one of the school's subjects
+  const n = _sn(s); if (!n) return ''; const pool = cls ? subjectsFor(cls) : SUBJECTS_ALL;
+  return pool.find(x => _sn(x) === n) || [].concat(SUBJ_ALIAS[n] || []).find(x => pool.includes(x)) || '';
+}

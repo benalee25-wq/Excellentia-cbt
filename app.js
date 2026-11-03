@@ -53,7 +53,7 @@ async function dash() {
   const soon = data.filter(x => !x.submitted_at && x.start_at && new Date(x.start_at) > now);
   const missed = data.filter(x => !x.submitted_at && x.end_at && new Date(x.end_at) < now);
   const card = (x, body) => `<div class="card"><h3>${esc(x.title)}</h3><p class="mute">${esc(x.subject)}${x.term ? ' · ' + esc(x.term) : ''} · ${x.duration_min} min · ${x.num_questions} questions</p>${body}</div>`;
-  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bPas">📖 Passages</button> <button class="alt sm" id="bMsg">📢 Messages</button> <button class="alt sm" id="bMat">📚 Study materials</button> <button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
+  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bRes">📊 My results</button> <button class="alt sm" id="bPas">📖 Passages</button> <button class="alt sm" id="bMsg">📢 Messages</button> <button class="alt sm" id="bMat">📚 Study materials</button> <button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
   h += open.map(x => card(x, `${x.attempt_id ? '<span class="badge gold">In progress</span> ' : ''}${x.end_at ? `<p class="mute">Closes ${fm(x.end_at)}</p>` : ''}<button data-go="${x.id}" data-code="${x.has_code}">${x.attempt_id ? 'Resume exam' : 'Start exam'}</button>`)).join('') || '<p class="mute">No exam is open right now.</p>';
   if (soon.length) h += `<h2>Upcoming</h2>` + soon.map(x => card(x, `<p>Opens ${fm(x.start_at)}</p>`)).join('');
   if (done.length) h += `<h2>Completed</h2>` + done.map(x => { const pc = x.total ? Math.round(x.score / x.total * 100) : 0; return card(x, `<p><b>${x.score}/${x.total}</b> (${pc}%) <span class="badge ${pc >= x.pass_mark ? 'ok' : 'bad'}">${pc >= x.pass_mark ? 'Passed' : 'Not passed'}</span></p>${x.show_review ? `<button class="alt sm" data-rev="${x.attempt_id}">Review answers</button>` : ''}`); }).join('');
@@ -61,7 +61,7 @@ async function dash() {
   $('#main').innerHTML = h;
   $('#bPw').onclick = changePw;
   $('#bMat').onclick = mats;
-  $('#bMsg').onclick = msgs; msgBadge(); $('#bPas').onclick = psgList;
+  $('#bMsg').onclick = msgs; msgBadge(); $('#bPas').onclick = psgList; $('#bRes').onclick = myResults;
   $$('[data-go]').forEach(b => b.onclick = () => begin(b, b.dataset.go, b.dataset.code === 'true' && !data.find(x => x.id === b.dataset.go).attempt_id));
   $$('[data-rev]').forEach(b => b.onclick = () => review(b.dataset.rev));
 }
@@ -287,4 +287,28 @@ async function psgList() {
     $$('[data-p]', $('#plist')).forEach(b => b.onclick = () => { const x = data.find(v => v.id === b.dataset.p); openPassage({ path: x.file_path, title: x.title }); });
   };
   $('#psr').oninput = draw; $('#psf').onchange = draw; draw();
+}
+
+// ---------- my results by subject ----------
+const gradeOf = p => p >= 70 ? 'A' : p >= 60 ? 'B' : p >= 50 ? 'C' : p >= 45 ? 'D' : p >= 40 ? 'E' : 'F';
+async function myResults() {
+  $('#main').innerHTML = '<p class="mute">Loading your results…</p>';
+  const { data, error } = await sb.rpc('my_results');
+  if (error) { $('#main').innerHTML = `<p class="err">${esc(friendly(error.message))}</p><button class="alt" id="rBack">Back</button>`; $('#rBack').onclick = dash; return; }
+  const terms = [...new Set(data.map(x => x.term).filter(Boolean))];
+  $('#main').innerHTML = `<p style="margin:0"><button class="alt sm" id="rBack">← Back to exams</button></p><h2>📊 My results</h2>
+    <label>Term</label><select id="rTerm"><option value="">All terms</option>${terms.map(t => `<option>${esc(t)}</option>`).join('')}</select><div id="rOut" style="margin-top:12px"></div>`;
+  $('#rBack').onclick = dash;
+  const draw = () => {
+    const t = $('#rTerm').value, by = {};
+    data.filter(x => !t || x.term === t).forEach(x => { (by[x.subject] = by[x.subject] || []).push(x.total ? x.score / x.total * 100 : 0); });
+    const rows = Object.entries(by).map(([s, l]) => [s, l.length, +(l.reduce((a, b) => a + b, 0) / l.length).toFixed(1)]).sort((a, b) => a[0].localeCompare(b[0]));
+    const total = +rows.reduce((a, r) => a + r[2], 0).toFixed(1), avg = rows.length ? +(total / rows.length).toFixed(1) : 0;
+    $('#rOut').innerHTML = rows.length ? `<div class="card"><table><tr><th>Subject</th><th>Exams</th><th>Score (%)</th><th>Grade</th></tr>
+      ${rows.map(r => `<tr><td>${esc(r[0])}</td><td>${r[1]}</td><td><b>${r[2]}</b></td><td>${gradeOf(r[2])}</td></tr>`).join('')}
+      <tr><th colspan="2">Overall total</th><th colspan="2">${total}</th></tr><tr><th colspan="2">Overall average</th><th colspan="2">${avg}% (${gradeOf(avg)})</th></tr></table>
+      <p class="mute">Each subject score is the average of your exams in that subject. The average is the total divided by the ${rows.length} subject(s) you have written.</p></div>`
+      : '<p class="mute">You have no submitted exams yet.</p>';
+  };
+  $('#rTerm').onchange = draw; draw();
 }

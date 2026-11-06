@@ -36,7 +36,7 @@ function go(t, pop) {
   tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   if (!pop && hist[hist.length - 1] !== t) { hist.push(t); history[hist.length === 1 ? 'replaceState' : 'pushState']({ t }, '', '#' + t); }
   $('#bBack').classList.toggle('hide', hist.length < 2);
-  ({ bank, upload, exams, students, results, broadsheet, materials, passages, activity, messages, backup })[t]();
+  ({ bank, upload, exams, students, results, broadsheet, materials, passages, live, activity, messages, backup })[t]();
 }
 $('#bBack').onclick = () => history.back();
 window.addEventListener('popstate', () => {
@@ -975,4 +975,89 @@ function bsCards() {
     <table><tr><th>Subject</th><th>Score (%)</th><th>Grade</th></tr>${d.subjects.filter(k => s.subs[k] != null).map(k => `<tr><td>${esc(k)}</td><td>${s.subs[k]}</td><td>${grade(s.subs[k])}</td></tr>`).join('')}</table>
     <p><b>Total:</b> ${s.total} · <b>Average:</b> ${s.avg}% (${grade(s.avg)}) · <b>Subjects written:</b> ${s.n}<br><b>Position in class:</b> ${s.pos} of ${d.students.length}<br><b>Date printed:</b> ${esc(when)}</p>
     <p style="margin-top:30px">Teacher's signature: ____________________</p></div>`).join(''));
+}
+
+
+// ================= LIVE CLASSES (Zoom + Google Classroom) =================
+const liveState = c => { const s = new Date(c.starts_at).getTime(), e = s + c.duration_min * 60000, n = Date.now(); return n < s ? 'Upcoming' : n <= e ? 'Live now' : 'Ended'; };
+async function live() {
+  $('#main').innerHTML = `<div class="card"><p class="mute">Schedule a Zoom lesson. Students see it under <b>🎥 Live classes</b> on their dashboard. The Zoom link and passcode are shown to them only from <b>15 minutes before</b> the start, and the platform records who joined.</p>
+    <div class="row"><button class="gold" id="lvAdd">+ Schedule a class</button></div></div><div id="lvList"></div>`;
+  $('#lvAdd').onclick = () => lForm(); loadLive();
+}
+async function loadLive() {
+  const { data, error } = await sb.from('live_classes').select('*').order('starts_at', { ascending: false }).limit(100);
+  if (error) return toast(friendly(error.message), true);
+  const { data: st } = await sb.rpc('admin_live_stats'), stat = Object.fromEntries((st || []).map(x => [x.class_id, x]));
+  $('#lvList').innerHTML = (data.map(x => { const s = stat[x.id], state = liveState(x); return `<div class="card">
+    <span class="badge ${state === 'Live now' ? 'ok' : 'gold'}">${state === 'Live now' ? '● ' : ''}${state}</span> <span class="badge">${esc(clsName(x.class_level))}</span> ${x.subject ? `<span class="badge">${esc(x.subject)}</span> ` : ''}${x.published ? '' : '<span class="badge bad">Hidden</span>'}
+    <h3 style="margin:.4em 0 .2em">${esc(x.title)}</h3>
+    <p class="mute" style="margin:0 0 8px">${esc(fmtWhen(x.starts_at))} · ${x.duration_min} min${x.description ? '<br>' + esc(x.description) : ''}${s ? `<br>Joined: <b>${s.joined}</b> of ${s.audience} students` : ''}</p>
+    <button class="alt sm" data-w="${x.id}">Who joined</button> <button class="alt sm" data-e="${x.id}">Edit</button> <button class="alt sm" data-d="${x.id}">Delete</button></div>`; }).join('')
+    || '<div class="card">No classes scheduled yet. Tap “+ Schedule a class”.</div>');
+  $$('[data-w]').forEach(b => b.onclick = () => run(b, () => lWho(data.find(x => x.id === b.dataset.w))));
+  $$('[data-e]').forEach(b => b.onclick = () => lForm(data.find(x => x.id === b.dataset.e)));
+  $$('[data-d]').forEach(b => b.onclick = async () => {
+    const x = data.find(v => v.id === b.dataset.d);
+    if (!(await askYes('Delete this class?', `“${x.title}”\n\nIt disappears for students and its attendance record is deleted. This cannot be undone.`, 'Yes, delete', 'Keep it'))) return;
+    run(b, async () => {
+      const { data: gone, error } = await sb.from('live_classes').delete().eq('id', x.id).select('id');
+      if (error) return toast(friendly(error.message), true);
+      if (!gone || !gone.length) return toast('Could not delete it. Refresh and try again.', true);
+      toast('Deleted'); loadLive();
+    });
+  });
+}
+function lForm(x = {}) {
+  const pad = n => String(n).padStart(2, '0'), loc = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const start = x.starts_at ? loc(new Date(x.starts_at)) : loc(new Date(Math.ceil((Date.now() + 36e5) / 36e5) * 36e5));
+  const m = modal(`<h2>${x.id ? 'Edit' : 'Schedule'} a live class</h2>
+  <label>Title</label><input id="lfT" value="${esc(x.title)}" placeholder="e.g. Chemistry: Acids, bases and salts">
+  <div class="row"><div><label>Class</label><select id="lfC">${['All', ...CLASSES].map(c => `<option value="${c}" ${c === (x.class_level || CLASSES[0]) ? 'selected' : ''}>${clsName(c)}</option>`).join('')}</select></div>
+  <div><label>Subject</label><select id="lfS" data-subjof="#lfC">${subjOpts(x.class_level || CLASSES[0], x.subject)}</select></div></div>
+  <div class="row"><div><label>Starts (your phone's time)</label><input id="lfD" type="datetime-local" value="${start}"></div>
+  <div><label>Length (minutes)</label><input id="lfL" type="number" inputmode="numeric" min="10" max="480" value="${x.duration_min || 60}"></div></div>
+  <label>Zoom link (must start with https://)</label><input id="lfZ" type="url" value="${esc(x.join_url)}" placeholder="https://zoom.us/j/…">
+  <label>Zoom passcode (optional)</label><input id="lfP" value="${esc(x.meeting_passcode)}" autocomplete="off">
+  <label>Google Classroom link (optional)</label><input id="lfG" type="url" value="${esc(x.classroom_url)}" placeholder="https://classroom.google.com/c/…">
+  <label>Recording link (add it after the lesson, optional)</label><input id="lfR" type="url" value="${esc(x.recording_url)}" placeholder="https://…">
+  <label>Notes for students (optional)</label><textarea id="lfN" rows="2" placeholder="e.g. Bring your textbook and a notebook">${esc(x.description)}</textarea>
+  <label>Visible to students?</label><select id="lfV"><option value="yes" ${x.published === false ? '' : 'selected'}>Yes</option><option value="no" ${x.published === false ? 'selected' : ''}>No, keep hidden</option></select>
+  ${x.id ? '' : '<label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:8px"><input type="checkbox" id="lfM" checked style="width:auto;min-height:0"> Also send a message to the class about it</label>'}
+  <div class="row" style="margin-top:12px"><button id="lfSave">Save</button><button class="alt" id="lfX">Cancel</button></div>`);
+  $('#lfX', m).onclick = () => m.remove();
+  $('#lfSave', m).onclick = e => run(e.target, async () => {
+    const v = id => $(id, m).value.trim(), https = u => !u || /^https:\/\/\S+$/i.test(u);
+    const when = new Date(v('#lfD')), len = parseInt(v('#lfL'), 10);
+    const r = { title: v('#lfT'), class_level: v('#lfC'), subject: v('#lfS') || null, starts_at: isNaN(when) ? null : when.toISOString(), duration_min: len, join_url: v('#lfZ'),
+      meeting_passcode: v('#lfP') || null, classroom_url: v('#lfG') || null, recording_url: v('#lfR') || null, description: v('#lfN') || null, published: $('#lfV', m).value === 'yes' };
+    if (!r.title) return toast('Please type a title.', true);
+    if (!r.starts_at) return toast('Choose the date and time.', true);
+    if (!(len >= 10 && len <= 480)) return toast('The length must be between 10 and 480 minutes.', true);
+    if (!r.join_url || !https(r.join_url)) return toast('The Zoom link must start with https://', true);
+    if (!https(r.classroom_url) || !https(r.recording_url)) return toast('Links must start with https://', true);
+    const { error } = x.id ? await sb.from('live_classes').update(r).eq('id', x.id) : await sb.from('live_classes').insert(r);
+    if (error) return toast(friendly(error.message), true);
+    if (!x.id && $('#lfM', m) && $('#lfM', m).checked) {   // a short heads-up message (never contains the Zoom link or passcode)
+      try { await sb.from('messages').insert({ title: 'Live class: ' + r.title, class_level: r.class_level, body: `${r.subject ? r.subject + '\n' : ''}${fmtWhen(r.starts_at)} (${len} minutes)${r.description ? '\n' + r.description : ''}\n\nOpen 🎥 Live classes on your dashboard to join. It opens 15 minutes before the start.` }); } catch (e2) {}
+    }
+    m.remove(); toast('Saved'); loadLive();
+  });
+}
+async function lWho(x) {
+  const { data: j, error } = await sb.from('live_joins').select('user_id,joined_at,profiles(full_name,username,section)').eq('class_id', x.id).order('joined_at');
+  if (error) return toast(friendly(error.message), true);
+  let pq = sb.from('profiles').select('id,full_name,username,section,class_level').eq('role', 'student').order('full_name').limit(3000);
+  if (x.class_level !== 'All') pq = pq.eq('class_level', x.class_level);
+  const { data: all } = await pq, here = new Set(j.map(r => r.user_id)), away = (all || []).filter(p => !here.has(p.id));
+  const m = modal(`<h2>${esc(x.title)}</h2><p class="mute">${esc(fmtWhen(x.starts_at))}</p>
+    <h3>Joined (${j.length})</h3>${j.length ? `<div class="scroll"><table><tr><th>Name</th><th>Joined at</th></tr>${j.map(r => `<tr><td>${esc(r.profiles?.full_name)}<br><span class="mute">${esc(r.profiles?.section || r.profiles?.username || '')}</span></td><td>${esc(fmtWhen(r.joined_at))}</td></tr>`).join('')}</table></div>` : '<p class="mute">Nobody has joined yet.</p>'}
+    <h3>Did not join (${away.length})</h3>${away.length ? `<div class="scroll"><table><tr><th>Name</th><th>Class</th></tr>${away.map(p => `<tr><td>${esc(p.full_name)}</td><td>${esc(classLabel(p))}</td></tr>`).join('')}</table></div>` : '<p class="mute">Everyone joined.</p>'}
+    <div class="row" style="margin-top:12px"><button id="lwX">Export Excel</button><button class="alt" id="lwC">Close</button></div>`);
+  $('#lwC', m).onclick = () => m.remove();
+  $('#lwX', m).onclick = () => {
+    const when = nowStr(), sh = [...j.map(r => ({ Name: safeCell(r.profiles?.full_name || ''), Username: safeCell(r.profiles?.username || ''), Status: 'Joined', 'Joined at': fmtWhen(r.joined_at) })),
+      ...away.map(p => ({ Name: safeCell(p.full_name), Username: safeCell(p.username), Status: 'Did not join', 'Joined at': '' }))].map(r => ({ ...r, Class: x.class_level, Lesson: safeCell(x.title), 'Date downloaded': when }));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh), 'Attendance'); XLSX.writeFile(wb, `attendance-${dayStr()}.xlsx`);
+  };
 }

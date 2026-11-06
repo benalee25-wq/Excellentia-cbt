@@ -53,7 +53,7 @@ async function dash() {
   const soon = data.filter(x => !x.submitted_at && x.start_at && new Date(x.start_at) > now);
   const missed = data.filter(x => !x.submitted_at && x.end_at && new Date(x.end_at) < now);
   const card = (x, body) => `<div class="card"><h3>${esc(x.title)}</h3><p class="mute">${esc(x.subject)}${x.term ? ' · ' + esc(x.term) : ''} · ${x.duration_min} min · ${x.num_questions} questions</p>${body}</div>`;
-  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bRes">📊 My results</button> <button class="alt sm" id="bPas">📖 Passages</button> <button class="alt sm" id="bMsg">📢 Messages</button> <button class="alt sm" id="bMat">📚 Study materials</button> <button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
+  let h = `<p style="text-align:right;margin:0"><button class="alt sm" id="bLive">🎥 Live classes</button> <button class="alt sm" id="bRes">📊 My results</button> <button class="alt sm" id="bPas">📖 Passages</button> <button class="alt sm" id="bMsg">📢 Messages</button> <button class="alt sm" id="bMat">📚 Study materials</button> <button class="alt sm" id="bPw">Change password</button></p><h2>Ready to take</h2>`;
   h += open.map(x => card(x, `${x.attempt_id ? '<span class="badge gold">In progress</span> ' : ''}${x.end_at ? `<p class="mute">Closes ${fm(x.end_at)}</p>` : ''}<button data-go="${x.id}" data-code="${x.has_code}">${x.attempt_id ? 'Resume exam' : 'Start exam'}</button>`)).join('') || '<p class="mute">No exam is open right now.</p>';
   if (soon.length) h += `<h2>Upcoming</h2>` + soon.map(x => card(x, `<p>Opens ${fm(x.start_at)}</p>`)).join('');
   if (done.length) h += `<h2>Completed</h2>` + done.map(x => { const pc = x.total ? Math.round(x.score / x.total * 100) : 0; return card(x, `<p><b>${x.score}/${x.total}</b> (${pc}%) <span class="badge ${pc >= x.pass_mark ? 'ok' : 'bad'}">${pc >= x.pass_mark ? 'Passed' : 'Not passed'}</span></p>${x.show_review ? `<button class="alt sm" data-rev="${x.attempt_id}">Review answers</button>` : ''}`); }).join('');
@@ -61,7 +61,7 @@ async function dash() {
   $('#main').innerHTML = h;
   $('#bPw').onclick = changePw;
   $('#bMat').onclick = mats;
-  $('#bMsg').onclick = msgs; msgBadge(); $('#bPas').onclick = psgList; $('#bRes').onclick = myResults;
+  $('#bMsg').onclick = msgs; msgBadge(); $('#bPas').onclick = psgList; $('#bRes').onclick = myResults; $('#bLive').onclick = liveList;
   $$('[data-go]').forEach(b => b.onclick = () => begin(b, b.dataset.go, b.dataset.code === 'true' && !data.find(x => x.id === b.dataset.go).attempt_id));
   $$('[data-rev]').forEach(b => b.onclick = () => review(b.dataset.rev));
 }
@@ -311,4 +311,29 @@ async function myResults() {
       : '<p class="mute">You have no submitted exams yet.</p>';
   };
   $('#rTerm').onchange = draw; draw();
+}
+
+// ---------- live classes (Zoom) ----------
+async function liveList() {
+  $('#main').innerHTML = '<p class="mute">Loading live classes…</p>';
+  const { data, error } = await sb.rpc('list_live_classes');
+  if (error) { $('#main').innerHTML = `<p class="err">${esc(friendly(error.message))}</p><button class="alt" id="lBack">Back</button>`; $('#lBack').onclick = dash; return; }
+  const fmt = iso => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  const card = x => `<div class="card"><p style="margin:0 0 4px"><span class="badge ${x.status === 'live' ? 'ok' : x.status === 'ended' ? '' : 'gold'}">${x.status === 'live' ? '● Live now' : x.status === 'upcoming' ? 'Upcoming' : 'Ended'}</span> ${x.subject ? `<span class="badge">${esc(x.subject)}</span> ` : ''}${x.joined ? '<span class="badge ok">✓ You joined</span>' : ''}</p>
+    <h3 style="margin:.3em 0">${esc(x.title)}</h3><p class="mute" style="margin:0 0 8px">${esc(fmt(x.starts_at))} · ${x.duration_min} min${x.description ? '<br>' + esc(x.description) : ''}</p>
+    ${x.can_join ? `<button data-j="${x.id}">🎥 Join class</button> ` : x.status === 'upcoming' ? '<p class="mute" style="margin:0 0 8px">The Join button appears 15 minutes before the start.</p>' : ''}
+    ${x.classroom_url ? `<a class="btn alt" target="_blank" rel="noopener noreferrer" href="${esc(x.classroom_url)}">Google Classroom</a> ` : ''}${x.recording_url ? `<a class="btn alt" target="_blank" rel="noopener noreferrer" href="${esc(x.recording_url)}">▶ Watch recording</a>` : ''}</div>`;
+  const now = data.filter(x => x.status !== 'ended'), past = data.filter(x => x.status === 'ended').reverse();
+  $('#main').innerHTML = `<p style="margin:0"><button class="alt sm" id="lBack">← Back to exams</button></p><h2>🎥 Live classes</h2>
+    ${now.length ? now.map(card).join('') : '<p class="mute">No live classes are scheduled for your class right now.</p>'}
+    ${past.length ? `<h3>Past classes</h3>${past.map(card).join('')}` : ''}`;
+  $('#lBack').onclick = dash;
+  $$('[data-j]').forEach(b => b.onclick = () => run(b, async () => {
+    const { data: j, error: e } = await sb.rpc('join_live_class', { cid: b.dataset.j });
+    if (e) return toast(e.message, true);
+    const d = document.createElement('div'); d.className = 'modal';
+    d.innerHTML = `<div style="max-width:460px"><h2>${esc(j.title)}</h2>${j.passcode ? `<p>Zoom passcode: <b style="font-size:1.2em">${esc(j.passcode)}</b></p>` : ''}<p class="mute">Tap the button to open Zoom. If Zoom is not installed on your phone, install it first.</p>
+      <div class="row" style="margin-top:12px"><a class="btn" target="_blank" rel="noopener noreferrer" href="${esc(j.url)}">Open Zoom</a><button class="alt" id="lvX">Close</button></div></div>`;
+    document.body.append(d); $('#lvX', d).onclick = () => { d.remove(); liveList(); };
+  }));
 }

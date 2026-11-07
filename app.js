@@ -13,7 +13,7 @@ $('#bLogin').onclick = e => run(e.target, async () => {
   if (error && pw !== pw.trim()) ({ error } = await sb.auth.signInWithPassword({ email, password: pw.trim() }));   // stray space copied with the password
   if (error) {
     const creds = /invalid login credentials/i.test(error.message) || error.code === 'invalid_credentials';
-    $('#lerr').textContent = creds ? 'Wrong username or password. Check and try again.' : `Sign-in problem: ${error.message}. Please tell your teacher.`;
+    $('#lerr').textContent = creds ? 'Wrong username or password. Check and try again.' : `Sign-in problem. ${friendly(error.message)}`;
     if (creds) { $('#p').value = ''; $('#p').focus(); }
     return;
   }
@@ -31,7 +31,7 @@ $('#bOut').onclick = async () => { if (ex && !(await askYes('Leave the exam?', '
 async function boot(fresh) {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return show('vLogin');
-  const { data: p } = await sb.from('profiles').select('*').eq('id', session.user.id).single();
+  const { data: p } = await sb.from('profiles').select('id,username,full_name,role,class_level,section').eq('id', session.user.id).single();
   if (!p) { toast('Profile missing. Ask your teacher.', true); return show('vLogin'); }
   if (p.role === 'admin') { await sb.auth.signOut(); show('vLogin'); $('#lerr').textContent = 'This is a teacher account. Teachers sign in on the admin page.'; return; }
   me = p;
@@ -220,7 +220,7 @@ boot(false);
 // ---------- study materials ----------
 async function mats() {
   $('#main').innerHTML = '<p class="mute">Loading study materials…</p>';
-  const { data, error } = await sb.from('materials').select('*').order('created_at', { ascending: false }).limit(500);
+  const { data, error } = await sb.from('materials').select('id,title,description,subject,topic,kind,file_path,file_name,file_size,link_url,created_at').order('created_at', { ascending: false }).limit(500);
   if (error) { $('#main').innerHTML = `<p class="err">${esc(friendly(error.message))}</p><button class="alt" id="mBack">Back</button>`; $('#mBack').onclick = dash; return; }
   const subs = [...new Set(data.map(x => x.subject))].sort();
   $('#main').innerHTML = `<p style="margin:0"><button class="alt sm" id="mBack">← Back to exams</button></p><h2>Study materials</h2>
@@ -253,7 +253,7 @@ async function msgBadge() {
 }
 async function msgs() {
   $('#main').innerHTML = '<p class="mute">Loading messages…</p>';
-  const [m, r] = await Promise.all([sb.from('messages').select('*').order('created_at', { ascending: false }).limit(100), sb.from('message_reads').select('message_id').limit(1000)]);
+  const [m, r] = await Promise.all([sb.from('messages').select('id,title,body,student_id,created_at').order('created_at', { ascending: false }).limit(100), sb.from('message_reads').select('message_id').limit(1000)]);
   if (m.error) { $('#main').innerHTML = `<p class="err">${esc(friendly(m.error.message))}</p><button class="alt" id="mBack">Back</button>`; $('#mBack').onclick = dash; return; }
   const seen = new Set((r.data || []).map(x => x.message_id));
   $('#main').innerHTML = `<p style="margin:0"><button class="alt sm" id="mBack">← Back to exams</button></p><h2>Messages from your teacher</h2>` +
@@ -270,7 +270,7 @@ async function msgs() {
 // ---------- passages to study (separate from the exam) ----------
 async function psgList() {
   $('#main').innerHTML = '<p class="mute">Loading passages…</p>';
-  const { data, error } = await sb.from('passages').select('*').order('subject').order('title').limit(300);
+  const { data, error } = await sb.from('passages').select('id,title,description,subject,topic,file_path,file_size').order('subject').order('title').limit(300);
   if (error) { $('#main').innerHTML = `<p class="err">${esc(friendly(error.message))}</p><button class="alt" id="pBack">Back</button>`; $('#pBack').onclick = dash; return; }
   const subs = [...new Set(data.map(x => x.subject))].sort();
   $('#main').innerHTML = `<p style="margin:0"><button class="alt sm" id="pBack">← Back to exams</button></p><h2>📖 Passages to study</h2>
@@ -322,7 +322,7 @@ async function liveList() {
   const card = x => `<div class="card"><p style="margin:0 0 4px"><span class="badge ${x.status === 'live' ? 'ok' : x.status === 'ended' ? '' : 'gold'}">${x.status === 'live' ? '● Live now' : x.status === 'upcoming' ? 'Upcoming' : 'Ended'}</span> ${x.subject ? `<span class="badge">${esc(x.subject)}</span> ` : ''}${x.joined ? '<span class="badge ok">✓ You joined</span>' : ''}</p>
     <h3 style="margin:.3em 0">${esc(x.title)}</h3><p class="mute" style="margin:0 0 8px">${esc(fmt(x.starts_at))} · ${x.duration_min} min${x.description ? '<br>' + esc(x.description) : ''}</p>
     ${x.can_join ? `<button data-j="${x.id}">🎥 Join class</button> ` : x.status === 'upcoming' ? '<p class="mute" style="margin:0 0 8px">The Join button appears 15 minutes before the start.</p>' : ''}
-    ${x.classroom_url ? `<a class="btn alt" target="_blank" rel="noopener noreferrer" href="${esc(x.classroom_url)}">Google Classroom</a> ` : ''}${x.recording_url ? `<a class="btn alt" target="_blank" rel="noopener noreferrer" href="${esc(x.recording_url)}">▶ Watch recording</a>` : ''}</div>`;
+    ${x.classroom_url ? `<a class="btn alt" target="_blank" rel="noopener noreferrer" href="${esc(safeUrl(x.classroom_url))}">Google Classroom</a> ` : ''}${x.recording_url ? `<a class="btn alt" target="_blank" rel="noopener noreferrer" href="${esc(safeUrl(x.recording_url))}">▶ Watch recording</a>` : ''}</div>`;
   const now = data.filter(x => x.status !== 'ended'), past = data.filter(x => x.status === 'ended').reverse();
   $('#main').innerHTML = `<p style="margin:0"><button class="alt sm" id="lBack">← Back to exams</button></p><h2>🎥 Live classes</h2>
     ${now.length ? now.map(card).join('') : '<p class="mute">No live classes are scheduled for your class right now.</p>'}
@@ -330,10 +330,10 @@ async function liveList() {
   $('#lBack').onclick = dash;
   $$('[data-j]').forEach(b => b.onclick = () => run(b, async () => {
     const { data: j, error: e } = await sb.rpc('join_live_class', { cid: b.dataset.j });
-    if (e) return toast(e.message, true);
+    if (e) return toast(friendly(e.message), true);
     const d = document.createElement('div'); d.className = 'modal';
     d.innerHTML = `<div style="max-width:460px"><h2>${esc(j.title)}</h2>${j.passcode ? `<p>Zoom passcode: <b style="font-size:1.2em">${esc(j.passcode)}</b></p>` : ''}<p class="mute">Tap the button to open Zoom. If Zoom is not installed on your phone, install it first.</p>
-      <div class="row" style="margin-top:12px"><a class="btn" target="_blank" rel="noopener noreferrer" href="${esc(j.url)}">Open Zoom</a><button class="alt" id="lvX">Close</button></div></div>`;
+      <div class="row" style="margin-top:12px"><a class="btn" target="_blank" rel="noopener noreferrer" href="${esc(safeUrl(j.url))}">Open Zoom</a><button class="alt" id="lvX">Close</button></div></div>`;
     document.body.append(d); $('#lvX', d).onclick = () => { d.remove(); liveList(); };
   }));
 }

@@ -1,6 +1,6 @@
 const show = id => ['vLogin', 'vApp'].forEach(x => $('#' + x).classList.toggle('hide', x !== id));
 const opts = (arr, sel) => arr.map(x => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join('');
-const dl = (name, text, type = 'text/csv') => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); };
+const dl = (name, text, type = 'text/csv') => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };   // SECURITY FIX: do not keep downloaded data in memory
 const csvCell = v => { v = safeCell(v); return /[",\n]/.test(v ?? '') ? '"' + String(v).replace(/"/g, '""') + '"' : (v ?? ''); };
 const loc = d => { if (!d) return ''; const t = new Date(d); t.setMinutes(t.getMinutes() - t.getTimezoneOffset()); return t.toISOString().slice(0, 16); };
 let tab = 'bank';
@@ -14,7 +14,7 @@ $('#bLogin').onclick = e => run(e.target, async () => {
   if (error && pw !== pw.trim()) ({ error } = await sb.auth.signInWithPassword({ email, password: pw.trim() }));
   if (error) {
     const creds = /invalid login credentials/i.test(error.message) || error.code === 'invalid_credentials';
-    $('#lerr').textContent = creds ? 'Wrong username or password.' : `Sign-in problem: ${error.message}`;
+    $('#lerr').textContent = creds ? 'Wrong username or password.' : `Sign-in problem. ${friendly(error.message)}`;
     if (creds) { $('#p').value = ''; $('#p').focus(); }
     return;
   }
@@ -26,7 +26,7 @@ async function boot() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return show('vLogin');
   const { data: p, error: pe } = await sb.from('profiles').select('role').eq('id', session.user.id).single();
-  if (pe) { await sb.auth.signOut(); show('vLogin'); return $('#lerr').textContent = 'Database error: ' + pe.message; }
+  if (pe) { await sb.auth.signOut(); show('vLogin'); return $('#lerr').textContent = 'Database error. ' + friendly(pe.message); }
   if (!p || p.role !== 'admin') { await sb.auth.signOut(); show('vLogin'); return $('#lerr').textContent = 'This account is not a teacher/admin account.'; }
   show('vApp'); go(tab); startPresence();
 }
@@ -96,8 +96,9 @@ function qForm(x = {}) {
       correct: $('#qa', m).value, marks: +$('#qm', m).value || 1, difficulty: $('#qd', m).value, explanation: $('#qe', m).value.trim() || null, image_url: x.image_url || null };
     if (!r.subject || !r.question || !r.opt_a || !r.opt_b) return toast('Subject, question and options A and B are required.', true);
     if (!r['opt_' + r.correct.toLowerCase()]) return toast('The correct answer points to an empty option.', true);
+    if (r.marks <= 0 || r.marks > 100) return toast('Marks must be between 0 and 100.', true);   // SECURITY FIX: sane marks
     const f = $('#qi', m).files[0];
-    if (f) { const path = `${Date.now()}-${f.name.replace(/[^\w.]/g, '_')}`; const { error } = await sb.storage.from('question-images').upload(path, f); if (error) return toast('Image upload failed: ' + error.message, true); r.image_url = sb.storage.from('question-images').getPublicUrl(path).data.publicUrl; }
+    if (f) { const IMG = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }; if (!IMG[f.type]) return toast('The picture must be a PNG, JPG, WebP or GIF image.', true); if (f.size > 2 * 1048576) return toast('The picture is over 2 MB. Choose a smaller one.', true); const path = `${crypto.randomUUID()}.${IMG[f.type]}`; const { error } = await sb.storage.from('question-images').upload(path, f, { contentType: f.type }); /* SECURITY FIX: unguessable name, checked type */ if (error) return toast('Image upload failed: ' + error.message, true); r.image_url = sb.storage.from('question-images').getPublicUrl(path).data.publicUrl; }
     const { error } = x.id ? await sb.from('questions').update(r).eq('id', x.id) : await sb.from('questions').insert(r);
     if (error) return toast(friendly(error.message), true); m.remove(); toast('Saved'); loadBank();
   });
@@ -131,6 +132,7 @@ function upload() {
 }
 const norm = s => String(s).toLowerCase().replace(/[^a-z]/g, '');
 async function readFile(f) {
+  if (f.size > 10 * 1048576) return toast('That file is over 10 MB. Split it into smaller files.', true);   // SECURITY FIX: size cap
   const ext = f.name.split('.').pop().toLowerCase(); let objs = [];
   if (ext === 'csv') { const rows = parseCSV(await f.text()); const h = rows.shift().map(norm); objs = rows.map(r => Object.fromEntries(h.map((k, i) => [k, r[i] ?? '']))); }
   else if (ext === 'xlsx' || ext === 'xls') { const wb = XLSX.read(await f.arrayBuffer()); objs = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }).map(o => Object.fromEntries(Object.entries(o).map(([k, v]) => [norm(k), v]))); }
@@ -139,6 +141,7 @@ async function readFile(f) {
   await finish(objs);
 }
 async function finish(objs) {
+  if (objs.length > 2000) return toast('Too many questions in one upload (limit 2000). Split the file.', true);   // SECURITY FIX: row cap
   if (!objs.length) return toast('No questions found. Each question needs its options (A, B, C, D) and an answer.', true);
   localStorage.setItem('cbt-us', $('#us').value.trim());   // the class is never remembered, so one class can't be saved into another by mistake
   const { data: old } = await sb.from('questions').select('class_level,subject,question').limit(5000);
@@ -179,6 +182,8 @@ function check(o, seen) {
     explanation: String(o.explanation || '').trim() || null, difficulty: ['Easy', 'Medium', 'Hard'].find(d => d.toLowerCase() === String(o.difficulty || 'Medium').trim().toLowerCase()) || 'Medium', marks: parseFloat(o.marks) || 1 };
   L.forEach(k => r['opt_' + k] = String(o['option' + k] ?? o[k] ?? '').trim() || null);
   if (!r.subject) e.push('Missing subject'); else if (!canonSubject(r.subject, cls)) e.push(`"${r.subject}" is not one of the school's subjects for ${cls || 'this class'}`); if (!r.question) e.push('Missing question'); if (!r.opt_a || !r.opt_b) e.push('Need at least options A and B');
+  if (r.question.length > 5000 || L.some(k => (r['opt_' + k] || '').length > 1000) || (r.explanation || '').length > 3000) e.push('Text too long (question 5000, option 1000, explanation 3000 characters)');   // SECURITY FIX: match database limits
+  if (r.marks <= 0 || r.marks > 100) e.push('Marks must be between 0 and 100');
   const a = String(o.correctanswer ?? o.answer ?? '').trim(); let c = /^\(?[A-Da-d]\)?[.)]?$/.test(a) ? a.replace(/[^A-Da-d]/g, '').toUpperCase() : '';
   if (!c && a) { const i = L.findIndex(k => r['opt_' + k] && r['opt_' + k].toLowerCase() === a.toLowerCase()); c = i >= 0 ? 'ABCD'[i] : ''; }
   r.correct = c; if (!c) e.push('Missing or invalid correct answer'); else if (!r['opt_' + c.toLowerCase()]) e.push('Correct answer points to an empty option');
@@ -192,7 +197,7 @@ function preview() {
   <p style="margin:6px 0"><b>Will be saved to:</b> ${Object.entries(ok.reduce((d, p) => { const k = p.r.class_level + ' · ' + p.r.subject; d[k] = (d[k] || 0) + 1; return d; }, {})).map(([k, n]) => `<span class="badge gold">${esc(k)}: ${n}</span>`).join(' ') || 'nothing yet'}</p>
   <button id="bSave" ${ok.length ? '' : 'disabled'} style="width:100%">Save ${ok.length} question(s)</button>
   <div class="scroll"><table><tr><th>#</th><th>Question and options</th><th>Answer</th></tr>
-  ${parsed.map((p, i) => `<tr class="${p.e.length ? 'errrow' : ''}"><td>${i + 1}</td><td><span class="badge">${esc(p.r.class_level || '?')}</span> ${fmt(p.r.question).slice(0, 160)}<br><span class="mute">${['a', 'b', 'c', 'd'].filter(k => p.r['opt_' + k]).map(k => k.toUpperCase() + '. ' + fmt(p.r['opt_' + k])).join(' · ')}</span>${p.e.length ? '<br><span class="err">' + esc(p.e.join('; ')) + '</span>' : ''}</td>
+  ${parsed.map((p, i) => `<tr class="${p.e.length ? 'errrow' : ''}"><td>${i + 1}</td><td><span class="badge">${esc(p.r.class_level || '?')}</span> ${fmt(String(p.r.question).slice(0, 160))}<br><span class="mute">${['a', 'b', 'c', 'd'].filter(k => p.r['opt_' + k]).map(k => k.toUpperCase() + '. ' + fmt(p.r['opt_' + k])).join(' · ')}</span>${p.e.length ? '<br><span class="err">' + esc(p.e.join('; ')) + '</span>' : ''}</td>
   <td><select data-i="${i}" style="width:72px"><option value="">?</option>${[...'ABCD'].map(c => `<option ${p.r.correct === c ? 'selected' : ''}>${c}</option>`).join('')}</select></td></tr>`).join('')}</table></div></div>`;
   $$('#prev select').forEach(s => s.onchange = () => {
     const p = parsed[+s.dataset.i]; p.r.correct = s.value; p.e = p.e.filter(x => !/correct answer/i.test(x));
@@ -282,7 +287,7 @@ async function eForm(x = {}) {
   const mode = () => { const man = $('#emode', m).value === 'm'; $('#rnd', m).classList.toggle('hide', man); $('#man', m).classList.toggle('hide', !man); if (man) loadPick(); };
   async function loadPick() {
     const { data } = await sb.from('questions').select('id,question,topic,difficulty').eq('class_level', $('#ec', m).value).ilike('subject', $('#es', m).value.trim() || '%').limit(400);
-    $('#mlist', m).innerHTML = (data || []).map(q => `<label style="display:flex;gap:8px;color:var(--ink)"><input type="checkbox" style="width:auto;min-height:0" value="${q.id}" ${chosen.has(q.id) ? 'checked' : ''}><span>${fmt(q.question).slice(0, 110)} <span class="mute">(${esc(q.topic || '-')}, ${esc(q.difficulty)})</span></span></label>`).join('') || '<p class="mute">No questions for this class and subject.</p>';
+    $('#mlist', m).innerHTML = (data || []).map(q => `<label style="display:flex;gap:8px;color:var(--ink)"><input type="checkbox" style="width:auto;min-height:0" value="${q.id}" ${chosen.has(q.id) ? 'checked' : ''}><span>${fmt(String(q.question).slice(0, 110))} <span class="mute">(${esc(q.topic || '-')}, ${esc(q.difficulty)})</span></span></label>`).join('') || '<p class="mute">No questions for this class and subject.</p>';
     $$('#mlist input', m).forEach(c => c.onchange = () => { c.checked ? chosen.add(c.value) : chosen.delete(c.value); $('#mc', m).textContent = chosen.size + ' selected'; });
     $('#mc', m).textContent = chosen.size + ' selected';
   }
@@ -304,6 +309,9 @@ async function eForm(x = {}) {
       access_code: $('#eac', m).value.trim() || null, instructions: $('#ei', m).value.trim() || null, show_review: $('#erv', m).checked, published: $('#epb', m).checked,
       question_ids: man ? [...chosen] : null, num_questions: man ? chosen.size : (+$('#en', m).value || 20), topic_filter: man ? null : ($('#etp', m).value.trim() || null) };
     if (!r.title || !r.subject) return toast('Title and subject are required.', true);
+    if (r.duration_min < 1 || r.duration_min > 600) return toast('Duration must be between 1 and 600 minutes.', true);   // SECURITY FIX: sane exam settings
+    if (r.pass_mark < 0 || r.pass_mark > 100) return toast('Pass mark must be between 0 and 100.', true);
+    if (r.num_questions < 1 || r.num_questions > 500) return toast('Number of questions must be between 1 and 500.', true);
     if (S.dt && E.dt && E.dt - S.dt < r.duration_min * 60000 && !confirm(`The window between start and end is shorter than the ${r.duration_min}-minute duration. Save anyway?`)) return;
     if (man && !chosen.size) return toast('Pick at least one question.', true);
     if (!man) {
@@ -433,6 +441,7 @@ async function regStudents(f) {
   if (!f) return; const out = $('#sOut'); let ok = 0, skipped = 0; const bad = [], creds = [];
   out.innerHTML = '<p class="mute">Reading file…</p>';
   try {
+    if (f.size > 2 * 1048576) { out.innerHTML = '<p class="err">That file is too large for a student list.</p>'; return; }   // SECURITY FIX: size cap
     const rows = parseCSV((await f.text()).replace(/^\uFEFF/, ''));
     const head = (rows.shift() || []).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
     const iU = head.findIndex(h => h.includes('user')), iP = head.findIndex(h => h.includes('pass')), iC = head.findIndex(h => h.includes('class')), iS = head.findIndex(h => h.includes('section'));
@@ -440,6 +449,7 @@ async function regStudents(f) {
     const chosen = $('#sUpC').value;
     if (iU < 0 || iN < 0 || (iC < 0 && !chosen)) { out.innerHTML = '<p class="err">The first row must have the headings Username, Full Name, Password and Class. Tap "Download CSV template" and use it.</p>'; return; }
     if (!rows.length) { out.innerHTML = '<p class="err">The file has no students under the headings.</p>'; return; }
+    if (rows.length > 1000) { out.innerHTML = '<p class="err">Too many rows (limit 1000 per file). Split the file.</p>'; return; }   // SECURITY FIX: row cap
     const { data: key, error: ke } = await sb.rpc('new_reg_key');
     if (ke || !key) { out.innerHTML = `<p class="err">Could not start registration: ${esc(ke ? ke.message : 'no key')}. Have you run the security SQL?</p>`; return; }
     const { data: have } = await sb.from('profiles').select('username,full_name,class_level').limit(5000);
@@ -497,7 +507,7 @@ async function showResults(ex) {
   await loadPending(ex, n);
   $$('[data-sc]').forEach(b => b.onclick = () => scoreForm(rows.find(r => r.id === b.dataset.sc), ex));
   if (!n) return;
-  const sheet = rows.map(r => ({ Position: r.pos, Username: safeCell(r.profiles?.username), Name: safeCell(r.profiles?.full_name), Class: ex.class_level, Section: safeCell(r.profiles?.section || ''), Subject: ex.subject, Term: ex.term, Score: r.score, Total: r.total, Percent: r.pct, Grade: grade(r.pct), Result: r.pass ? 'Pass' : 'Fail', 'Tab exits': r.tab_switches || 0, 'Score corrected': r.original_score != null ? 'Yes (was ' + r.original_score + ')' : '', 'Re-marked from': r.remarked_from != null ? r.remarked_from : '' }));
+  const sheet = rows.map(r => ({ Position: r.pos, Username: safeCell(r.profiles?.username), Name: safeCell(r.profiles?.full_name), Class: ex.class_level, Section: safeCell(r.profiles?.section || ''), Subject: safeCell(ex.subject), Term: safeCell(ex.term), Score: r.score, Total: r.total, Percent: r.pct, Grade: grade(r.pct), Result: r.pass ? 'Pass' : 'Fail', 'Tab exits': r.tab_switches || 0, 'Score corrected': r.original_score != null ? 'Yes (was ' + r.original_score + ')' : '', 'Re-marked from': r.remarked_from != null ? r.remarked_from : '' }));
   $('#rX').onclick = () => { const when = nowStr(), wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet.map(r => ({ ...r, 'Date downloaded': when }))), 'Results'); XLSX.writeFile(wb, `${ex.title}-results-${dayStr()}.xlsx`); };
   $('#rP').onclick = () => printOut(`<h2>${esc(CFG.SCHOOL)}</h2><h3>${esc(ex.title)} — ${esc(ex.class_level)} ${esc(ex.subject)} ${esc(ex.term || '')}</h3><p>Class average ${avg}% · Highest ${rows[0].pct}% · Lowest ${rows[n - 1].pct}%<br><b>Date printed:</b> ${esc(nowStr())}</p><table><tr><th>Pos</th><th>Name</th><th>Section</th><th>Score</th><th>%</th><th>Grade</th><th>Result</th></tr>${rows.map(r => `<tr><td>${r.pos}</td><td>${esc(r.profiles?.full_name)}</td><td>${esc(r.profiles?.section || '')}</td><td>${r.score}/${r.total}</td><td>${r.pct}</td><td>${grade(r.pct)}</td><td>${r.pass ? 'Pass' : 'Fail'}</td></tr>`).join('')}</table>`);
   $('#rS').onclick = () => { const when = nowStr(); printOut(rows.map(r => `<div class="slip"><h2 style="text-align:center">${esc(CFG.SCHOOL)}</h2><h3 style="text-align:center">Result slip</h3><p><b>Student:</b> ${esc(r.profiles?.full_name)} (${esc(r.profiles?.username)})<br><b>Class:</b> ${esc(classLabel({ class_level: ex.class_level, section: r.profiles?.section }))}<br><b>Exam:</b> ${esc(ex.title)} — ${esc(ex.subject)} ${esc(ex.term || '')}<br><b>Score:</b> ${r.score}/${r.total} (${r.pct}%)<br><b>Grade:</b> ${grade(r.pct)} · <b>Position:</b> ${r.pos} of ${n} · <b>Remark:</b> ${r.pass ? 'Pass' : 'Fail'}<br><b>Date printed:</b> ${esc(when)}</p><p style="margin-top:30px">Teacher's signature: ____________________</p></div>`).join('')); };
@@ -515,7 +525,7 @@ async function showResults(ex) {
   const ids = [...new Set(rows.flatMap(r => r.question_order))];
   const { data: qs } = await sb.from('questions').select('id,question,correct,topic').in('id', ids);
   const st = (qs || []).map(q => { const wrong = rows.filter(r => r.answers[q.id] !== q.correct).length; return { q, wrong, p: Math.round(wrong / rows.filter(r => r.question_order.includes(q.id)).length * 100) }; }).sort((a, b) => b.p - a.p).slice(0, 10);
-  $('#qa').innerHTML = `<div class="card scroll"><h3>Most missed questions</h3><table><tr><th>Question</th><th>Topic</th><th>Missed</th></tr>${st.map(s => `<tr><td>${fmt(s.q.question).slice(0, 120)}</td><td>${esc(s.q.topic || '-')}</td><td>${s.p}%</td></tr>`).join('')}</table></div>`;
+  $('#qa').innerHTML = `<div class="card scroll"><h3>Most missed questions</h3><table><tr><th>Question</th><th>Topic</th><th>Missed</th></tr>${st.map(s => `<tr><td>${fmt(String(s.q.question).slice(0, 120))}</td><td>${esc(s.q.topic || '-')}</td><td>${s.p}%</td></tr>`).join('')}</table></div>`;
 }
 async function loadPending(ex, done = 0) {
   const { data } = await sb.from('attempts').select('id,ends_at,answers,question_order,profiles(full_name,username,section)').eq('exam_id', ex.id).is('submitted_at', null);
@@ -542,7 +552,7 @@ async function exportAll() {
   const { data, error } = await sb.from('attempts').select('score,total,tab_switches,exams(title,class_level,subject,term,pass_mark),profiles(full_name,username,section)').not('submitted_at', 'is', null);
   if (error) return toast(friendly(error.message), true); if (!data.length) return toast('No results yet.', true);
   const when = nowStr();
-  const sh = data.map(a => { const p = a.total ? +(a.score / a.total * 100).toFixed(1) : 0; return { Class: a.exams.class_level, Section: safeCell(a.profiles.section || ''), Subject: a.exams.subject, Term: a.exams.term, Exam: a.exams.title, Username: safeCell(a.profiles.username), Name: safeCell(a.profiles.full_name), Score: a.score, Total: a.total, Percent: p, Grade: grade(p), Result: p >= a.exams.pass_mark ? 'Pass' : 'Fail', 'Date downloaded': when }; })
+  const sh = data.map(a => { const p = a.total ? +(a.score / a.total * 100).toFixed(1) : 0; return { Class: a.exams.class_level, Section: safeCell(a.profiles.section || ''), Subject: safeCell(a.exams.subject), Term: safeCell(a.exams.term), Exam: safeCell(a.exams.title), Username: safeCell(a.profiles.username), Name: safeCell(a.profiles.full_name), Score: a.score, Total: a.total, Percent: p, Grade: grade(p), Result: p >= a.exams.pass_mark ? 'Pass' : 'Fail', 'Date downloaded': when }; })
     .sort((a, b) => a.Class.localeCompare(b.Class) || a.Section.localeCompare(b.Section) || a.Subject.localeCompare(b.Subject) || b.Percent - a.Percent);
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh), 'All results'); XLSX.writeFile(wb, `all-results-${dayStr()}.xlsx`);
 }
@@ -759,7 +769,7 @@ const BK_TABLES = [['profiles', 'Students and teachers', 'id'], ['questions', 'Q
 async function fetchAll(table, order) {
   const out = [];
   for (let from = 0; ; from += 1000) {
-    let { data, error } = await sb.from(table).select('*').order(order).range(from, from + 999);
+    let { data, error } = await sb.from(table).select(table === 'profiles' ? 'id,username,full_name,role,class_level,section,created_at' : '*').order(order).range(from, from + 999);
     if (error) ({ data, error } = await sb.from(table).select('*').range(from, from + 999));   // retry without sorting
     if (error) return { error };
     out.push(...data); if (data.length < 1000) break;

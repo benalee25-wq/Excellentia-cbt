@@ -3,4 +3,4 @@ try { if (location.protocol === 'http:' && !/^(localhost|127\.|\[::1\])/.test(lo
 // Refuse to run inside someone else's page (clickjacking protection)
 if (top !== self) { document.documentElement.innerHTML = ''; top.location = self.location; }
 // Apply the saved look (colour template and light/dark) before the page paints
-try { var s = localStorage.getItem('cbt-skin'), t = localStorage.getItem('cbt-theme'); if (s) document.documentElement.dataset.skin = s; if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+try { var s = localStorage.getItem('cbt-skin'), t = localStorage.getItem('cbt-theme'); if (s && /^[a-z]{1,12}$/.test(s)) document.documentElement.dataset.skin = s; if (t && /^(light|dark)$/.test(t)) document.documentElement.dataset.theme = t; /* SECURITY FIX: only accept known-shaped values from localStorage */ } catch (e) {}

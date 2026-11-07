@@ -16,7 +16,10 @@ const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, {
 });
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// SECURITY FIX: also escape the single quote, so escaped text is safe in any attribute quoting style
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// SECURITY FIX: only http(s) addresses may be placed in a link (blocks javascript: and data: links)
+const safeUrl = u => /^https?:\/\/[^\s"'<>]+$/i.test(String(u || '')) ? String(u) : '#';
 
 // Math/science notation:  x^2  x^(n+1)  H_2O  H_(2)  [3/4]  -> sup / sub / fraction
 function fmt(s) {
@@ -120,7 +123,7 @@ function weakPw(p) {
 function friendly(m) {
   m = String(m || '');
   if (/failed to fetch|networkerror|load failed|network request failed/i.test(m)) return 'Network problem. Check your internet and try again.';
-  if (/^(Exam |This exam|You have already|Wrong access|No questions|Too many|Not allowed|Password must|User not found|Student not found|You cannot reset|Registration is closed|Review is not|Attempt not|Not available|Too much|The network|Timed out|Invalid login|Password should|New password|User already|Request rate|.*rate limit|Name is too short|Invalid class|Username must|That username|You signed in)/i.test(m)) return m;
+  if (/^(Exam |This exam|You have already|Wrong access|No questions|Too many|Not allowed|Password must|User not found|Student not found|You cannot reset|Registration is closed|Review is not|Attempt not|Not available|Too much|The network|Timed out|Invalid login|Password should|New password|User already|Request rate|.*rate limit|Review opens|Class not found|This class|Please sign in|Name is too short|Invalid class|Username must|That username|You signed in)/i.test(m)) return m;
   console.error(m); return 'Something went wrong. Please try again, or tell your teacher.';
 }
 // Stop spreadsheet formula injection: text that starts with = + - @ is shown as text
@@ -191,11 +194,13 @@ async function signOutLogged() { stopPresence(); try { await sb.rpc('log_signout
 
 // ===== Reading passage viewer (PDF drawn page by page, so it works on every phone) =====
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// SECURITY FIX: optional Subresource Integrity for the PDF reader. Paste the sha384 value from sri-helper.html between the quotes.
+const SRI = { pdfjs: '' };   // e.g. 'sha384-AbC...'. Empty = no check (the reader still works)
 let psgEl = null, psgTok = 0, psgTimer = null; const psgBytes = {};
 function loadPdfJs() {
   if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
   return new Promise((ok, no) => {
-    const s = document.createElement('script'); s.src = PDFJS;
+    const s = document.createElement('script'); s.src = PDFJS; if (SRI.pdfjs) { s.integrity = SRI.pdfjs; s.crossOrigin = 'anonymous'; }   // SECURITY FIX: SRI when configured
     s.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; ok(window.pdfjsLib); };
     s.onerror = () => no(new Error('The reader could not be loaded.')); document.head.append(s);
   });

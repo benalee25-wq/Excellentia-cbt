@@ -38,6 +38,7 @@ async function boot() {
 }
 // MULTI-SCHOOL: the owner gets a Schools tab; an owner without a school of their own only sees Schools and the shared question bank
 function setupTabs() {
+  const sm = $('.top .t small'); if (sm) sm.textContent = (ME.role === 'owner' ? 'Owner' : 'Admin') + ' · multi-school';   // shows which version and role you are signed in with
   const bar = $('#tabs');
   if (ME.role !== 'owner') $$('[data-t="schools"]', bar).forEach(b => b.remove());   // a different person signed in on this page
   if (ME.role === 'owner' && !$('[data-t="schools"]', bar)) { const b = document.createElement('button'); b.dataset.t = 'schools'; b.textContent = 'Schools'; b.onclick = () => go('schools'); bar.prepend(b); }

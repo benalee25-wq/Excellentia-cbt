@@ -4,6 +4,7 @@ const dl = (name, text, type = 'text/csv') => { const a = document.createElement
 const csvCell = v => { v = safeCell(v); return /[",\n]/.test(v ?? '') ? '"' + String(v).replace(/"/g, '""') + '"' : (v ?? ''); };
 const loc = d => { if (!d) return ''; const t = new Date(d); t.setMinutes(t.getMinutes() - t.getTimezoneOffset()); return t.toISOString().slice(0, 16); };
 let tab = 'bank';
+let ME = { role: 'admin', school_id: null };   // MULTI-SCHOOL: who is signed in
 brand(); theme();
 
 // ---------- auth ----------
@@ -25,10 +26,24 @@ $('#bOut').onclick = async () => { await signOutLogged(); hist.length = 0; show(
 async function boot() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return show('vLogin');
-  const { data: p, error: pe } = await sb.from('profiles').select('role').eq('id', session.user.id).single();
+  const { data: p, error: pe } = await sb.from('profiles').select('role,school_id').eq('id', session.user.id).single();
   if (pe) { await sb.auth.signOut(); show('vLogin'); return $('#lerr').textContent = 'Database error. ' + friendly(pe.message); }
-  if (!p || p.role !== 'admin') { await sb.auth.signOut(); show('vLogin'); return $('#lerr').textContent = 'This account is not a teacher/admin account.'; }
+  if (!p || !['admin', 'owner'].includes(p.role)) { await sb.auth.signOut(); show('vLogin'); return $('#lerr').textContent = 'This account is not a teacher/admin account.'; }
+  const info = await loadSchool();
+  if (p.school_id && info && info.active === false) { await sb.auth.signOut(); show('vLogin'); return $('#lerr').textContent = 'Your school account is not active. Please contact the platform owner.'; }
+  ME = { role: p.role, school_id: p.school_id };
+  if (ME.role === 'owner' && tab === 'bank') tab = 'schools';
+  setupTabs();
   show('vApp'); go(tab); startPresence();
+}
+// MULTI-SCHOOL: the owner gets a Schools tab; an owner without a school of their own only sees Schools and the shared question bank
+function setupTabs() {
+  const bar = $('#tabs');
+  if (ME.role !== 'owner') $$('[data-t="schools"]', bar).forEach(b => b.remove());   // a different person signed in on this page
+  if (ME.role === 'owner' && !$('[data-t="schools"]', bar)) { const b = document.createElement('button'); b.dataset.t = 'schools'; b.textContent = 'Schools'; b.onclick = () => go('schools'); bar.prepend(b); }
+  const homeless = ME.role === 'owner' && !ME.school_id, keep = ['bank', 'upload', 'schools'];
+  $$('#tabs button').forEach(b => b.classList.toggle('hide', homeless && !keep.includes(b.dataset.t)));
+  if (homeless && !keep.includes(tab)) tab = 'schools';
 }
 $$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.t));
 const hist = [];                                  // tabs visited, for the back arrow and the phone's Back button
@@ -36,7 +51,7 @@ function go(t, pop) {
   tab = t; $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   if (!pop && hist[hist.length - 1] !== t) { hist.push(t); history[hist.length === 1 ? 'replaceState' : 'pushState']({ t }, '', '#' + t); }
   $('#bBack').classList.toggle('hide', hist.length < 2);
-  ({ bank, upload, exams, students, results, broadsheet, materials, passages, live, activity, messages, backup })[t]();
+  ({ bank, upload, exams, students, results, broadsheet, materials, passages, live, activity, messages, backup, schools })[t]();
 }
 $('#bBack').onclick = () => history.back();
 window.addEventListener('popstate', () => {
@@ -51,7 +66,8 @@ async function bank() {
     <div><label>Class</label><select id="fc"><option value="">All</option>${opts(CLASSES)}</select></div>
     <div><label>Subject</label><input id="fs" list="subjAll" placeholder="e.g. Mathematics"><datalist id="subjAll">${SUBJECTS_ALL.map(v => `<option value="${esc(v)}">`).join('')}</datalist></div>
     <div><label>Topic</label><input id="ft"></div>
-    <div><label>Difficulty</label><select id="fd"><option value="">All</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div></div>
+    <div><label>Difficulty</label><select id="fd"><option value="">All</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
+    <div><label>Source</label><select id="fsc"><option value="">All</option><option value="mine">My school</option><option value="shared">Shared bank</option></select></div></div>
     <div class="row" style="margin-top:10px"><button id="bFind">Search</button><button class="gold" id="bAdd">+ Add question</button></div></div><div id="chips" style="margin:8px 0"></div><div id="list"></div>`;
   $('#bFind').onclick = loadBank; $('#bAdd').onclick = () => qForm();
   Promise.all(CLASSES.map(c => sb.from('questions').select('id', { count: 'exact', head: true }).eq('class_level', c))).then(rs => {
@@ -66,12 +82,14 @@ async function loadBank() {
   if ($('#fs').value.trim()) q = q.ilike('subject', '%' + $('#fs').value.trim() + '%');
   if ($('#ft').value.trim()) q = q.ilike('topic', '%' + $('#ft').value.trim() + '%');
   if ($('#fd').value) q = q.eq('difficulty', $('#fd').value);
+  if ($('#fsc').value === 'mine') q = q.not('school_id', 'is', null);   // MULTI-SCHOOL
+  if ($('#fsc').value === 'shared') q = q.is('school_id', null);
   const { data, error } = await q; if (error) return toast(friendly(error.message), true);
   $('#list').innerHTML = `<p class="mute">${data.length} question(s)${data.length === 300 ? ' (showing first 300 — narrow the filters)' : ''}</p>` +
-    (data.map(x => `<div class="card"><span class="badge">${esc(x.class_level)}</span> <span class="badge">${esc(x.subject)}</span> <span class="badge">${esc(x.topic || 'No topic')}</span> <span class="badge gold">${esc(x.difficulty)}</span>
+    (data.map(x => `<div class="card"><span class="badge">${esc(x.class_level)}</span> <span class="badge">${esc(x.subject)}</span> <span class="badge">${esc(x.topic || 'No topic')}</span> <span class="badge gold">${esc(x.difficulty)}</span>${x.school_id ? '' : ' <span class="badge">Shared bank</span>'}
     <div class="qtext" style="font-size:1.05rem">${fmt(x.question)}</div>${x.image_url ? `<img class="qimg" style="max-height:120px" src="${esc(x.image_url)}" alt="">` : ''}
     <p class="mute">A. ${fmt(x.opt_a)} · B. ${fmt(x.opt_b)}${x.opt_c ? ' · C. ' + fmt(x.opt_c) : ''}${x.opt_d ? ' · D. ' + fmt(x.opt_d) : ''}<br><b>Answer: ${x.correct}</b> · ${x.marks} mark(s)</p>
-    <button class="alt sm" data-e="${x.id}">Edit</button> <button class="alt sm" data-d="${x.id}">Delete</button></div>`).join('') || '<div class="card">No questions yet. Add one or use the Upload tab.</div>');
+    ${x.school_id || ME.role === 'owner' ? `<button class="alt sm" data-e="${x.id}">Edit</button> <button class="alt sm" data-d="${x.id}">Delete</button>` : '<span class="mute">Shared question: read only</span>'}</div>`).join('') || '<div class="card">No questions yet. Add one or use the Upload tab.</div>');
   $$('[data-e]').forEach(b => b.onclick = () => qForm(data.find(x => x.id === b.dataset.e)));
   $$('[data-d]').forEach(b => b.onclick = async () => { if (!confirm('Delete this question?')) return; const { error } = await sb.from('questions').delete().eq('id', b.dataset.d); error ? toast(friendly(error.message), true) : (toast('Deleted'), loadBank()); });
 }
@@ -80,6 +98,7 @@ function modal(html) { const m = document.createElement('div'); m.className = 'm
   return m; }
 function qForm(x = {}) {
   const m = modal(`<h2>${x.id ? 'Edit' : 'Add'} question</h2>
+  ${!x.id && ME.role === 'owner' ? `<label>Add to</label><select id="qsc">${ME.school_id ? '<option value="mine">My school</option>' : ''}<option value="shared">Shared bank (all schools can use it)</option></select>` : ''}
   <div class="row"><div><label>Class</label><select id="qc">${opts(CLASSES, x.class_level)}</select></div><div><label>Subject</label><select id="qs" data-subjof="#qc">${subjOpts(x.class_level || CLASSES[0], x.subject)}</select></div></div>
   <label>Topic</label><input id="qt" value="${esc(x.topic)}">
   <label>Question <span class="mute">(use x^2, H_2O, [3/4] for notation)</span></label><textarea id="qq" rows="3">${esc(x.question)}</textarea>
@@ -97,8 +116,10 @@ function qForm(x = {}) {
     if (!r.subject || !r.question || !r.opt_a || !r.opt_b) return toast('Subject, question and options A and B are required.', true);
     if (!r['opt_' + r.correct.toLowerCase()]) return toast('The correct answer points to an empty option.', true);
     if (r.marks <= 0 || r.marks > 100) return toast('Marks must be between 0 and 100.', true);   // SECURITY FIX: sane marks
+    const toShared = x.id ? !x.school_id : !!($('#qsc', m) && $('#qsc', m).value === 'shared');   // MULTI-SCHOOL
+    if (toShared && !x.id) r.school_id = null;
     const f = $('#qi', m).files[0];
-    if (f) { const IMG = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }; if (!IMG[f.type]) return toast('The picture must be a PNG, JPG, WebP or GIF image.', true); if (f.size > 2 * 1048576) return toast('The picture is over 2 MB. Choose a smaller one.', true); const path = `${crypto.randomUUID()}.${IMG[f.type]}`; const { error } = await sb.storage.from('question-images').upload(path, f, { contentType: f.type }); /* SECURITY FIX: unguessable name, checked type */ if (error) return toast('Image upload failed: ' + error.message, true); r.image_url = sb.storage.from('question-images').getPublicUrl(path).data.publicUrl; }
+    if (f) { const IMG = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }; if (!IMG[f.type]) return toast('The picture must be a PNG, JPG, WebP or GIF image.', true); if (f.size > 2 * 1048576) return toast('The picture is over 2 MB. Choose a smaller one.', true); const path = `${toShared ? 'shared' : ME.school_id}/${crypto.randomUUID()}.${IMG[f.type]}`; const { error } = await sb.storage.from('question-images').upload(path, f, { contentType: f.type }); /* SECURITY FIX: unguessable name, checked type */ if (error) return toast('Image upload failed: ' + error.message, true); r.image_url = sb.storage.from('question-images').getPublicUrl(path).data.publicUrl; }
     const { error } = x.id ? await sb.from('questions').update(r).eq('id', x.id) : await sb.from('questions').insert(r);
     if (error) return toast(friendly(error.message), true); m.remove(); toast('Saved'); loadBank();
   });
@@ -109,6 +130,7 @@ const store = k => localStorage.getItem('cbt-' + k) || '';
 let parsed = [];
 function upload() {
   $('#main').innerHTML = `<div class="card"><h2>Add questions</h2>
+  ${ME.role === 'owner' ? `<label>Add to</label><select id="utg">${ME.school_id ? '<option value="mine">My school</option>' : ''}<option value="shared">Shared bank (all schools can use it)</option></select>` : ''}
   <div class="row"><div><label>Class (choose it every time)</label><select id="uc"><option value="">Choose the class…</option>${opts(CLASSES)}</select></div>
   <div><label>Subject</label><select id="us">${subjOpts('', store('us'))}</select></div>
   <div><label>Topic (optional)</label><input id="ut"></div></div>
@@ -205,7 +227,7 @@ function preview() {
     preview();
   });
   $('#bSave').onclick = e => run(e.target, async () => {
-    for (let i = 0; i < ok.length; i += 200) { const { error } = await sb.from('questions').insert(ok.slice(i, i + 200).map(p => p.r)); if (error) return toast(friendly(error.message), true); }
+    for (let i = 0; i < ok.length; i += 200) { const { error } = await sb.from('questions').insert(ok.slice(i, i + 200).map(p => ($('#utg') && $('#utg').value === 'shared') ? { ...p.r, school_id: null } : p.r)); if (error) return toast(friendly(error.message), true); }
     toast(`${ok.length} questions saved`); parsed = []; $('#prev').innerHTML = ''; $('#ptxt').value = ''; $('#file').value = '';
   });
 }
@@ -279,6 +301,7 @@ async function eForm(x = {}) {
     ${x.passage_path ? `<p class="mute">Current file: ${esc(x.passage_name || 'passage.pdf')}. Choosing a new file replaces it.</p><label><input type="checkbox" id="epr" style="width:auto;min-height:0"> Remove the current passage</label>` : ''}
     <label><input type="checkbox" id="ekeep" style="width:auto;min-height:0" ${x.keep_order ? 'checked' : ''}> Keep the questions in the order they were uploaded (do not shuffle)</label>
     <p class="mute">For a 50-question passage exam: upload your 50 questions in order with the Topic set to the passage name. Then set "Question source" to Random from bank, "Only this topic" to that name, and "Number of questions" to 50.</p></div>
+  <label><input type="checkbox" id="eus" style="width:auto;min-height:0" ${x.use_shared === false ? '' : 'checked'}> Also use the shared question bank (questions supplied by the platform)</label>
   <label>Instructions</label><textarea id="ei" rows="3">${esc(x.instructions)}</textarea>
   <label><input type="checkbox" id="erv" style="width:auto;min-height:0" ${x.show_review ? 'checked' : ''}> Let students review answers after submitting</label>
   <label><input type="checkbox" id="epb" style="width:auto;min-height:0" ${x.published ? 'checked' : ''}> Publish now</label>
@@ -286,12 +309,12 @@ async function eForm(x = {}) {
   let chosen = new Set(x.question_ids || []);
   const mode = () => { const man = $('#emode', m).value === 'm'; $('#rnd', m).classList.toggle('hide', man); $('#man', m).classList.toggle('hide', !man); if (man) loadPick(); };
   async function loadPick() {
-    const { data } = await sb.from('questions').select('id,question,topic,difficulty').eq('class_level', $('#ec', m).value).ilike('subject', $('#es', m).value.trim() || '%').limit(400);
-    $('#mlist', m).innerHTML = (data || []).map(q => `<label style="display:flex;gap:8px;color:var(--ink)"><input type="checkbox" style="width:auto;min-height:0" value="${q.id}" ${chosen.has(q.id) ? 'checked' : ''}><span>${fmt(String(q.question).slice(0, 110))} <span class="mute">(${esc(q.topic || '-')}, ${esc(q.difficulty)})</span></span></label>`).join('') || '<p class="mute">No questions for this class and subject.</p>';
+    const { data } = await sb.from('questions').select('id,question,topic,difficulty,school_id').eq('class_level', $('#ec', m).value).ilike('subject', $('#es', m).value.trim() || '%').limit(400);
+    $('#mlist', m).innerHTML = (data || []).filter(q => q.school_id || $('#eus', m).checked).map(q => `<label style="display:flex;gap:8px;color:var(--ink)"><input type="checkbox" style="width:auto;min-height:0" value="${q.id}" ${chosen.has(q.id) ? 'checked' : ''}><span>${fmt(String(q.question).slice(0, 110))} <span class="mute">(${esc(q.topic || '-')}, ${esc(q.difficulty)})</span></span></label>`).join('') || '<p class="mute">No questions for this class and subject.</p>';
     $$('#mlist input', m).forEach(c => c.onchange = () => { c.checked ? chosen.add(c.value) : chosen.delete(c.value); $('#mc', m).textContent = chosen.size + ' selected'; });
     $('#mc', m).textContent = chosen.size + ' selected';
   }
-  $('#emode', m).onchange = mode; $('#ec', m).onchange = $('#es', m).onchange = () => $('#emode', m).value === 'm' && loadPick(); mode();
+  $('#eus', m).onchange = () => $('#emode', m).value === 'm' && loadPick(); $('#emode', m).onchange = mode; $('#ec', m).onchange = $('#es', m).onchange = () => $('#emode', m).value === 'm' && loadPick(); mode();
   $('#ex', m).onclick = () => m.remove();
   const roundUp = () => { const t = new Date(); t.setSeconds(0, 0); t.setMinutes(Math.ceil((t.getMinutes() + 1) / 5) * 5); return t; };
   $('#dsNow', m).onclick = () => setDt('ds', m, roundUp());
@@ -306,7 +329,7 @@ async function eForm(x = {}) {
     if (E.dt && E.dt <= new Date() && !confirm('The end time has already passed, so students cannot start this exam. Save anyway?')) return;
     const r = { title: $('#et', m).value.trim(), class_level: $('#ec', m).value, subject: $('#es', m).value.trim(), term: $('#etm', m).value, duration_min: +$('#ed', m).value || 30, pass_mark: +$('#ep', m).value || 50,
       start_at: S.iso, end_at: E.iso,
-      access_code: $('#eac', m).value.trim() || null, instructions: $('#ei', m).value.trim() || null, show_review: $('#erv', m).checked, published: $('#epb', m).checked,
+      access_code: $('#eac', m).value.trim() || null, instructions: $('#ei', m).value.trim() || null, show_review: $('#erv', m).checked, use_shared: $('#eus', m).checked, published: $('#epb', m).checked,
       question_ids: man ? [...chosen] : null, num_questions: man ? chosen.size : (+$('#en', m).value || 20), topic_filter: man ? null : ($('#etp', m).value.trim() || null) };
     if (!r.title || !r.subject) return toast('Title and subject are required.', true);
     if (r.duration_min < 1 || r.duration_min > 600) return toast('Duration must be between 1 and 600 minutes.', true);   // SECURITY FIX: sane exam settings
@@ -316,6 +339,7 @@ async function eForm(x = {}) {
     if (man && !chosen.size) return toast('Pick at least one question.', true);
     if (!man) {
       let q = sb.from('questions').select('id', { count: 'exact', head: true }).eq('class_level', r.class_level).eq('subject', r.subject);
+      if (!r.use_shared) q = q.not('school_id', 'is', null);
       if (r.topic_filter) q = q.eq('topic', r.topic_filter);
       const { count } = await q;
       if (count !== null && count < r.num_questions * 1.3 && !confirm(`Only ${count} question(s) in the bank for ${r.class_level} ${r.subject}. Students will see almost the same questions, so answers can be shared. Save anyway?`)) return;
@@ -343,7 +367,7 @@ async function students() {
   $('#main').innerHTML = `<div id="rq"></div><div class="card"><h3>Login sheet</h3><p class="mute">Gives every student in the chosen class a NEW random password, then lets you download or print all the logins. Old passwords stop working.</p>
   <div class="row"><select id="bc"><option value="">All classes</option>${opts(CLASSES)}</select><select id="bs"><option value="">All sections</option></select><button class="gold" id="bBulk">Generate logins</button></div><div id="bulkOut"></div></div><div class="card"><h2>Register students in bulk</h2><p>CSV columns: <b>Username, Full Name, Password, Class</b>, and optional <b>Section</b> (like 1A Diamond). Leave Password empty to auto-generate a safe one (or use 8+ characters).</p>
   <label>Class for this file (recommended: one class per file)</label><select id="sUpC"><option value="">Choose class, or use the Class column</option>${opts(CLASSES)}</select>
-  <p class="mute">If you choose a class, every row goes into it, and any row whose Class column says something different is rejected, so classes cannot get mixed. Usernames are shared by the whole school: two students cannot both be ade001, so add the class, like jss2.ade001.</p>
+  <p class="mute">If you choose a class, every row goes into it, and any row whose Class column says something different is rejected, so classes cannot get mixed. Usernames are unique within your school: two students cannot both be ade001, so add the class, like jss2.ade001.${SCHOOL && SCHOOL.user_prefix ? ` Your school code <b>${esc(SCHOOL.user_prefix)}</b> is added to the front of every username automatically, so students sign in as ${esc(SCHOOL.user_prefix)}ade001.` : ''}</p>
   <div class="row"><button class="alt" id="sTpl">Download CSV template</button></div><label>Upload CSV</label><input type="file" id="sFile" accept=".csv"><div id="sOut"></div></div>
   <div class="card"><div class="row"><select id="sc"><option value="">All classes</option>${opts(CLASSES)}</select><select id="ss"><option value="">All sections</option></select></div><div class="scroll" id="sList"></div></div>`;
   $('#sTpl').onclick = () => dl('students-template.csv', 'Username,Full Name,Password,Class,Section\nade001,Ade Bello,,JSS1,1A Diamond\nchi002,Chioma Okoro,,SS2,2B');
@@ -438,7 +462,7 @@ async function loadReq() {
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const isLimit = e => !!e && (e.status === 429 || /rate limit|too many/i.test(e.message || '') || /rate_limit/i.test(e.code || ''));
 async function regStudents(f) {
-  if (!f) return; const out = $('#sOut'); let ok = 0, skipped = 0; const bad = [], creds = [];
+  if (!f) return; const PFX = (SCHOOL && SCHOOL.user_prefix) || '';   // MULTI-SCHOOL const out = $('#sOut'); let ok = 0, skipped = 0; const bad = [], creds = [];
   out.innerHTML = '<p class="mute">Reading file…</p>';
   try {
     if (f.size > 2 * 1048576) { out.innerHTML = '<p class="err">That file is too large for a student list.</p>'; return; }   // SECURITY FIX: size cap
@@ -450,6 +474,8 @@ async function regStudents(f) {
     if (iU < 0 || iN < 0 || (iC < 0 && !chosen)) { out.innerHTML = '<p class="err">The first row must have the headings Username, Full Name, Password and Class. Tap "Download CSV template" and use it.</p>'; return; }
     if (!rows.length) { out.innerHTML = '<p class="err">The file has no students under the headings.</p>'; return; }
     if (rows.length > 1000) { out.innerHTML = '<p class="err">Too many rows (limit 1000 per file). Split the file.</p>'; return; }   // SECURITY FIX: row cap
+    const { data: inf } = await sb.rpc('my_school_info');   // MULTI-SCHOOL: the school's student limit
+    if (inf && inf.max_students && rows.length > inf.max_students - inf.students) { out.innerHTML = `<p class="err">Your school plan allows ${inf.max_students} students and ${inf.students} are registered, so only ${Math.max(0, inf.max_students - inf.students)} more can be added. This file has ${rows.length} rows. Ask the platform owner to raise the limit.</p>`; return; }
     const { data: key, error: ke } = await sb.rpc('new_reg_key');
     if (ke || !key) { out.innerHTML = `<p class="err">Could not start registration: ${esc(ke ? ke.message : 'no key')}. Have you run the security SQL?</p>`; return; }
     const { data: have } = await sb.from('profiles').select('username,full_name,class_level').limit(5000);
@@ -458,7 +484,7 @@ async function regStudents(f) {
     let lock = null; try { lock = await navigator.wakeLock.request('screen'); } catch (e) { }   // keep the screen awake
     try {
       for (let i = 0; i < rows.length; i++) {
-        const r = rows[i], u0 = (r[iU] || '').trim(), u = u0.toLowerCase(), n = (r[iN] || '').trim(), p0 = iP >= 0 ? (r[iP] || '').trim() : '', fcls = iC >= 0 ? (r[iC] || '').toUpperCase().replace(/\s+/g, '') : '', cls = chosen || fcls, pw = p0 || genPw(), sec = iS >= 0 ? (r[iS] || '').trim().slice(0, 40) : '';
+        const r = rows[i], u0 = (r[iU] || '').trim(), u1 = u0.toLowerCase(), u = (PFX && u1 && !u1.startsWith(PFX)) ? PFX + u1 : u1, n = (r[iN] || '').trim(), p0 = iP >= 0 ? (r[iP] || '').trim() : '', fcls = iC >= 0 ? (r[iC] || '').toUpperCase().replace(/\s+/g, '') : '', cls = chosen || fcls, pw = p0 || genPw(), sec = iS >= 0 ? (r[iS] || '').trim().slice(0, 40) : '';
         if (!/^[a-z0-9._-]{3,30}$/.test(u) || !n || weakPw(pw) || !CLASSES.includes(cls)) { bad.push(`Row ${i + 2} (${u0 || 'blank'}): needs a username (3-30 letters or numbers, no spaces), a name, a class like JSS1, and a password of 8+ characters with letters and numbers that is not easy to guess (or leave it empty)`); continue; }
         if (chosen && fcls && fcls !== chosen) { bad.push(`Row ${i + 2} (${u}): the Class column says ${fcls} but you chose ${chosen}. Not registered.`); continue; }
         const ex0 = exist.get(u);
@@ -1070,4 +1096,89 @@ async function lWho(x) {
       ...away.map(p => ({ Name: safeCell(p.full_name), Username: safeCell(p.username), Status: 'Did not join', 'Joined at': '' }))].map(r => ({ ...r, Class: x.class_level, Lesson: safeCell(x.title), 'Date downloaded': when }));
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sh), 'Attendance'); XLSX.writeFile(wb, `attendance-${dayStr()}.xlsx`);
   };
+}
+
+// ================= SCHOOLS (platform owner only) =================
+async function schools() {
+  $('#main').innerHTML = '<div class="card"><button class="gold" id="scAdd">+ Register a school</button><p class="mute">Each school gets its own students, teachers, exams and results, kept apart from the others. Every school can also use your shared question bank.</p></div><div id="scList"><p class="mute">Loading…</p></div>';
+  $('#scAdd').onclick = () => schoolForm();
+  const { data, error } = await sb.rpc('owner_list_schools');
+  if (error) return $('#scList').innerHTML = `<p class="err">${esc(friendly(error.message))}</p>`;
+  const today = new Date().toISOString().slice(0, 10);
+  $('#scList').innerHTML = (data || []).map(s => {
+    const expired = !!s.expires_on && s.expires_on < today, on = s.active && !expired;
+    return `<div class="card"><b>${esc(s.name)}</b> <span class="badge">${esc(s.code)}</span> <span class="badge ${on ? 'gold' : ''}">${on ? 'Active' : expired ? 'Expired' : 'Switched off'}</span>
+    <p class="mute">Students ${+s.students} of ${+s.max_students} · Teachers ${+s.admins} · Exams ${+s.exams}${s.expires_on ? ' · Access until ' + esc(s.expires_on) : ''}<br>Usernames start with: <b>${esc(s.user_prefix || '(nothing)')}</b></p>
+    <button class="alt sm" data-sa="${s.id}">Add admin</button> <button class="alt sm" data-sl="${s.id}">Admins</button> <button class="alt sm" data-se="${s.id}">Edit</button></div>`;
+  }).join('') || '<div class="card">No schools yet.</div>';
+  $$('[data-sa]').forEach(b => b.onclick = () => adminForm((data || []).find(s => s.id === b.dataset.sa)));
+  $$('[data-sl]').forEach(b => b.onclick = () => adminsList((data || []).find(s => s.id === b.dataset.sl)));
+  $$('[data-se]').forEach(b => b.onclick = () => schoolForm((data || []).find(s => s.id === b.dataset.se)));
+}
+function schoolForm(x = {}) {
+  const m = modal(`<h2>${x.id ? 'Edit' : 'Register'} school</h2>
+  <label>School name</label><input id="scn" value="${esc(x.name)}" maxlength="120">
+  ${x.id ? `<p class="mute">School code: <b>${esc(x.code)}</b> (cannot be changed)</p>` : `<label>School code (2 to 12 letters or numbers, no spaces)</label><input id="scc" maxlength="12" placeholder="e.g. stmary"><p class="mute">Every username in this school starts with this code, like <b>stmary.</b>ade001. Students and teachers sign in with it.</p>`}
+  <div class="row"><div><label>Student limit</label><input id="scm" type="number" value="${+x.max_students || 300}"></div>
+  <div><label>Access until (optional)</label><input id="scx" type="date" value="${esc(x.expires_on || '')}"></div></div>
+  ${x.id ? `<label><input type="checkbox" id="sca" style="width:auto;min-height:0" ${x.active ? 'checked' : ''}> School is switched on (untick to block everyone in this school)</label>` : ''}
+  <div class="row"><button id="scs">${x.id ? 'Save' : 'Register school'}</button><button class="alt" id="scx2">Cancel</button></div>`);
+  $('#scx2', m).onclick = () => m.remove();
+  $('#scs', m).onclick = e => run(e.target, async () => {
+    const name = $('#scn', m).value.trim(), max = +$('#scm', m).value, exp = $('#scx', m).value || null;
+    if (name.length < 2) return toast('Enter the school name.', true);
+    if (!(max >= 1 && max <= 100000)) return toast('The student limit must be between 1 and 100000.', true);
+    if (x.id) {
+      const { error } = await sb.rpc('owner_update_school', { sid: x.id, sname: name, smax: max, sexp: exp, sactive: $('#sca', m).checked });
+      if (error) return toast(friendly(error.message), true);
+      m.remove(); toast('Saved'); return schools();
+    }
+    const code = $('#scc', m).value.trim().toLowerCase();
+    if (!/^[a-z0-9]{2,12}$/.test(code)) return toast('The school code must be 2 to 12 letters or numbers.', true);
+    const { data, error } = await sb.rpc('owner_create_school', { sname: name, scode: code, smax: max, sexp: exp });
+    if (error) return toast(friendly(error.message), true);
+    m.remove(); toast('School registered. Now create its first admin.'); schools();
+    adminForm({ id: data.id, name, user_prefix: data.user_prefix });
+  });
+}
+function adminForm(s) {
+  if (!s) return;
+  const m = modal(`<h2>Add an admin for ${esc(s.name)}</h2>
+  <p class="mute">The admin manages this school only: its students, exams, results and materials. They sign in on this admin page.</p>
+  <label>Full name</label><input id="afn" maxlength="80">
+  <label>Username</label><div class="row" style="align-items:center"><b>${esc(s.user_prefix)}</b><input id="afu" value="admin" maxlength="20"></div>
+  <label>Password (8+ letters and numbers)</label><input id="afp" value="${esc(genPw())}">
+  <div class="row"><button id="afs">Create admin</button><button class="alt" id="afx">Cancel</button></div>`);
+  $('#afx', m).onclick = () => m.remove();
+  $('#afs', m).onclick = e => run(e.target, async () => {
+    const full = $('#afn', m).value.trim(), base = $('#afu', m).value.trim().toLowerCase(), pw = $('#afp', m).value, uname = (s.user_prefix || '') + base;
+    if (full.length < 2) return toast('Enter the admin\'s full name.', true);
+    if (!/^[a-z0-9._-]{2,24}$/.test(base) || uname.length < 3 || uname.length > 30) return toast('The username must be 3 to 30 letters or numbers in total, with no spaces.', true);
+    if (weakPw(pw)) return toast('Choose a password of 8+ characters with letters and numbers that is not easy to guess.', true);
+    const { data: key, error: ke } = await sb.rpc('owner_new_admin_key', { sid: s.id });
+    if (ke || !key) return toast(friendly(ke && ke.message), true);
+    const regClient = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+    const { error } = await regClient.auth.signUp({ email: uname + '@' + CFG.EMAIL_DOMAIN, password: pw, options: { data: { full_name: full, reg_key: key } } });
+    await sb.rpc('owner_close_admin_key', { sid: s.id });   // the key stops working now
+    if (error) return toast(/database error/i.test(error.message) ? 'Could not create the admin. The username may already be taken, or the school is switched off.' : friendly(error.message), true);
+    m.remove(); schools();
+    const url = location.origin + location.pathname, text = `School: ${s.name}\nSign in at: ${url}\nUsername: ${uname}\nPassword: ${pw}`;
+    const d = modal(`<h2>Admin created</h2><p class="mute">Send these details to the school. The password is not shown again.</p><pre style="white-space:pre-wrap;user-select:all">${esc(text)}</pre><div class="row"><button id="adc">Copy</button><button class="alt" id="add">Done</button></div>`);
+    $('#adc', d).onclick = () => navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Press and hold the text to copy it.', true));
+    $('#add', d).onclick = () => d.remove();
+  });
+}
+async function adminsList(s) {
+  if (!s) return;
+  const { data, error } = await sb.rpc('owner_school_admins', { sid: s.id });
+  if (error) return toast(friendly(error.message), true);
+  const m = modal(`<h2>Admins of ${esc(s.name)}</h2>${(data || []).map(a => `<div class="card"><b>${esc(a.full_name)}</b> <span class="mute">${esc(a.username)}${a.role === 'owner' ? ' · owner' : ''}</span>${a.role === 'admin' ? ` <button class="alt sm" data-rp="${esc(a.username)}">Reset password</button>` : ''}</div>`).join('') || '<p class="mute">No admin yet. Tap Add admin.</p>'}<div class="row"><button class="alt" id="alx">Close</button></div>`);
+  $('#alx', m).onclick = () => m.remove();
+  $$('[data-rp]', m).forEach(b => b.onclick = async () => {
+    const pw = prompt('New password for ' + b.dataset.rp + ' (8+ letters and numbers):', genPw()); if (!pw) return;
+    if (weakPw(pw)) return toast('Choose a password of 8+ characters with letters and numbers that is not easy to guess.', true);
+    const { error } = await sb.rpc('owner_reset_admin_password', { uname: b.dataset.rp, newpass: pw });
+    if (error) return toast(friendly(error.message), true);
+    alert('Password changed.\nUsername: ' + b.dataset.rp + '\nNew password: ' + pw);
+  });
 }

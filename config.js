@@ -42,6 +42,18 @@ async function run(btn, fn) {
   catch (e) { toast(friendly(e.message || String(e)), true); }
   finally { busy(btn, false); }
 }
+// MULTI-SCHOOL: the signed-in person's own school (name, username prefix, limits). Empty before sign-in.
+let SCHOOL = null;
+async function loadSchool() {
+  const { data } = await sb.rpc('my_school_info');
+  SCHOOL = data || null;
+  if (SCHOOL && SCHOOL.name) {
+    $$('.school').forEach(e => e.textContent = SCHOOL.name);
+    if (!CFG.LOGO) $$('.logo').forEach(e => e.textContent = SCHOOL.name[0]);
+    document.title = SCHOOL.name + ' — CBT';
+  }
+  return SCHOOL;
+}
 function brand() {
   $$('.school').forEach(e => e.textContent = CFG.SCHOOL);
   $$('.motto').forEach(e => e.textContent = CFG.MOTTO);
@@ -123,7 +135,7 @@ function weakPw(p) {
 function friendly(m) {
   m = String(m || '');
   if (/failed to fetch|networkerror|load failed|network request failed/i.test(m)) return 'Network problem. Check your internet and try again.';
-  if (/^(Exam |This exam|You have already|Wrong access|No questions|Too many|Not allowed|Password must|User not found|Student not found|You cannot reset|Registration is closed|Review is not|Attempt not|Not available|Too much|The network|Timed out|Invalid login|Password should|New password|User already|Request rate|.*rate limit|Review opens|Class not found|This class|Please sign in|Name is too short|Invalid class|Username must|That username|You signed in)/i.test(m)) return m;
+  if (/^(Exam |This exam|You have already|Wrong access|No questions|Too many|Not allowed|Password must|User not found|Student not found|You cannot reset|Registration is closed|Review is not|Attempt not|Not available|Too much|The network|Timed out|Invalid login|Password should|New password|User already|Request rate|.*rate limit|Review opens|Class not found|This class|Please sign in|Name is too short|Student limit|That school code|School code must|School not found|Admin not found|Your school account|This school account|Some chosen questions|Invalid class|Username must|That username|You signed in)/i.test(m)) return m;
   console.error(m); return 'Something went wrong. Please try again, or tell your teacher.';
 }
 // Stop spreadsheet formula injection: text that starts with = + - @ is shown as text

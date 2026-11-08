@@ -33,7 +33,9 @@ async function boot(fresh) {
   if (!session) return show('vLogin');
   const { data: p } = await sb.from('profiles').select('id,username,full_name,role,class_level,section').eq('id', session.user.id).single();
   if (!p) { toast('Profile missing. Ask your teacher.', true); return show('vLogin'); }
-  if (p.role === 'admin') { await sb.auth.signOut(); show('vLogin'); $('#lerr').textContent = 'This is a teacher account. Teachers sign in on the admin page.'; return; }
+  if (p.role !== 'student') { await sb.auth.signOut(); show('vLogin'); $('#lerr').textContent = 'This is a teacher account. Teachers sign in on the admin page.'; return; }
+  const info = await loadSchool();   // MULTI-SCHOOL: show this school's name; stop if the school is switched off
+  if (info && info.active === false) { await sb.auth.signOut(); show('vLogin'); $('#lerr').textContent = 'Your school account is not active. Please contact your school.'; return; }
   me = p;
   if (fresh || !tok()) { localStorage.setItem(TOK_KEY, crypto.randomUUID()); await sb.rpc('claim_session', { tok: tok() }); }
   $('#who').textContent = `${p.full_name} · ${classLabel(p)}`;
